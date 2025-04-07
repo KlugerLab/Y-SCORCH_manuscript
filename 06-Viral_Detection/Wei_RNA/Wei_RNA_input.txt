@@ -1,0 +1,9 @@
+CORES=48
+VIRAL_INDEX_FOLDER=<enter viral index output floder>
+VIRAL_FASTA=../HXB2_cladeB.fasta
+ADJUSTMENT_FACTOR=12
+OUTPUT_FOLDER=<enter output folder location>
+FASTQ_FOLDER=<enter fastq folder location>
+GEX_WHITE=../737K-arc-v1_gex.txt
+READ_GREP="*_S*_L*_R3_*.fastq.gz"
+CB_GREP="*_S*_L*_R1_*.fastq.gz"

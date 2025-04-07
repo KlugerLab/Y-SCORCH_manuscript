@@ -13,3 +13,5 @@ This repository includes scripts for the results generated in:
 - Folder 04-ATAC_DE/ includes the scripts to run ATAC DE analysis
 
 - Folder 05-communication/ includes the scripts to run cell-cell communication analysis
+
+- Folder 06-/Viral_Detection includes the scripts to run viral detection
