@@ -1,0 +1,13 @@
+VENUS_INDEX=<enter index output folder>
+HUMAN_FASTA=<enter human genome fasta location>
+HUMAN_GTF=<enter human genome gtf location>
+CORES=48
+VIRAL_FASTA=<enter viral fasta location>
+VIRAL_GTF=<enter viral gtf location>
+VENUS_OUTPUT=<enter venus output location>
+VIRUS_THRESHOLD=2
+BARCODE_LENGTH=16
+UMI_LENGTH=12
+WHITELIST=../737K-arc-v1_gex.txt
+CHR_REF=../virus_chr-ref.tsv
+CB_GREP="*_S*_L*_R1_*.fastq.gz"

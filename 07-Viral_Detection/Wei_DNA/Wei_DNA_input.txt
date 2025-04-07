@@ -1,0 +1,4 @@
+OUTPUT_FOLDER=<enter output folder>
+FASTQ_FOLDER=<enter folder containing fastq files>
+GEX_WHITE=../737K-arc-v1_gex.txt
+ATAC_WHITE=../737K-arc-v1_atac.txt
