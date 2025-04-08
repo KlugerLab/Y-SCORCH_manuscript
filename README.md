@@ -17,3 +17,6 @@ This repository includes scripts for the results generated in:
 - Folder 06-/astrocyte/ includes the scripts for astrocyte analysis
 
 - Folder 07-/Viral_Detection includes the scripts to run viral detection
+
+
+Code to run the nextflow pipeline can be found here: https://github.com/kragrawa/scorch_pipeline_dev
