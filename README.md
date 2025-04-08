@@ -16,4 +16,4 @@ This repository includes scripts for the results generated in:
 
 - Folder 06-/astrocyte/ includes the scripts for astrocyte analysis
 
-- Folder 06-/Viral_Detection includes the scripts to run viral detection
+- Folder 07-/Viral_Detection includes the scripts to run viral detection
