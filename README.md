@@ -14,4 +14,6 @@ This repository includes scripts for the results generated in:
 
 - Folder 05-communication/ includes the scripts to run cell-cell communication analysis
 
+- Folder 06-/astrocyte/ includes the scripts for astrocyte analysis
+
 - Folder 06-/Viral_Detection includes the scripts to run viral detection
