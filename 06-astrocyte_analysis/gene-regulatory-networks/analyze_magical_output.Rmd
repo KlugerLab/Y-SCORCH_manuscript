@@ -1,0 +1,206 @@
+---
+title: "analyze_magical_output"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+region <- "PFC"
+celltype <- "Astro"
+```
+
+
+```{r}
+atac_de_path <- paste0('/banach2/SCORCH/scripts/combined_analysis_paper/04-ATAC_DE/',region,"/results_ATAC/INS_HIV-CTR_res_edgeR_filtered.RDS")
+atac_de <- readRDS(atac_de_path)
+atac_de_micro <- atac_de$table$`HIV-CTR`[[celltype]]
+atac_de_micro_all <- atac_de_micro[which(abs(atac_de_micro$logFC) >= 0.5 & atac_de_micro$p_adj.glb <= 0.05),]
+atac_de_micro_up <- atac_de_micro[which(atac_de_micro$logFC >= 0.5 & atac_de_micro$p_adj.glb <= 0.05),]
+atac_de_micro_down <- atac_de_micro[which(atac_de_micro$logFC <= -0.5 & atac_de_micro$p_adj.glb <= 0.05),]
+
+
+rna_de_path <- paste0("/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/",region,"/results/",region,"_HIV-CTR_res_edgeR_filtered.RDS")
+rna_de <-  readRDS(rna_de_path)
+rna_de_micro <- rna_de$table$`HIV-CTR`[[celltype]]
+rna_de_micro_up <- rna_de_micro[which(rna_de_micro$logFC >= 0.5 & rna_de_micro$p_adj.glb <= 0.05),]
+rna_de_micro_down <- rna_de_micro[which(rna_de_micro$logFC <= -0.5 & rna_de_micro$p_adj.glb <= 0.05),]
+rna_de_micro_all <- rna_de_micro[which(abs(rna_de_micro$logFC) >= 0.5 & rna_de_micro$p_adj.glb <= 0.05),]
+
+
+```
+
+
+```{r}
+circuits_file <- paste0("/banach2/chang/new_SCORCH_analysis/MAGICAL/output/",region,"_",celltype,"MAGICAL_selected_regulatory_circuits.txt")
+circuits <- read_table(circuits_file)
+
+expanded_circuits <- circuits %>%
+  mutate(TFs = str_split(TFs, ",\\s*")) %>%  # Split TFs at commas, assuming optional spaces
+  unnest(TFs)  # Expand the list column into separate rows
+
+expanded_circuits <- expanded_circuits %>%
+  dplyr::filter(TFs != "" & !is.na(TFs))
+
+
+expanded_circuits$peakname <- paste0(expanded_circuits$Peak_chr,"-",expanded_circuits$Peak_start,"-",expanded_circuits$Peak_end)
+
+expanded_circuits <- expanded_circuits[, c("TFs", "peakname", "Gene_symbol")]
+
+expanded_circuits <- expanded_circuits[order(expanded_circuits$TFs), ]
+
+
+folder <- paste0("/banach2/chang/new_SCORCH_analysis/MAGICAL/analyzed_output/",region,"_new_",celltype,"/")
+write.csv(expanded_circuits, paste0(folder,"expanded_circuits.csv"), row.names = FALSE)
+```
+
+```{r}
+print(paste0("unique TFs (before fitering): ",length(unique(expanded_circuits$TFs))))
+print(paste0("unique Peaks (before fitering): ",length(unique(expanded_circuits$peakname))))
+print(paste0("unique Genes (before fitering): ",length(unique(expanded_circuits$Gene_symbol))))
+```
+
+
+Filter the circuit for plot
+```{R}
+n_genes <- 21
+n_TF <- 8
+
+rna_de_micro_all_filtered <- rna_de_micro_all[which(rna_de_micro_all$gene %in% expanded_circuits$Gene_symbol),]
+rna_de_micro_all_filtered <- rna_de_micro_all_filtered[order(abs(rna_de_micro_all_filtered$logFC),decreasing = TRUE), ]
+top_genes <- rna_de_micro_all_filtered[1:n_genes,]$gene
+
+expanded_circuits_filtered <- expanded_circuits[which(expanded_circuits$Gene_symbol %in% top_genes),]
+print(paste0("unique TFs (after gene fitering): ",length(unique(expanded_circuits_filtered$TFs))))
+print(paste0("unique Peaks (after gene fitering): ",length(unique(expanded_circuits_filtered$peakname))))
+print(paste0("unique Genes (after gene fitering): ",length(unique(expanded_circuits_filtered$Gene_symbol))))
+
+TF_table <- table(expanded_circuits_filtered$TFs)
+TF_table <- as.data.frame(TF_table)
+TF_table <- TF_table[order(TF_table$Freq,decreasing = TRUE),]
+chosen_TF <- TF_table$Var1[1:n_TF]
+expanded_circuits_filtered <- expanded_circuits_filtered[which(expanded_circuits_filtered$TFs %in% chosen_TF), ]
+print(paste0("unique TFs (after TF fitering): ",length(unique(expanded_circuits_filtered$TFs))))
+print(paste0("unique Peaks (after TF fitering): ",length(unique(expanded_circuits_filtered$peakname))))
+print(paste0("unique Genes (after TF fitering): ",length(unique(expanded_circuits_filtered$Gene_symbol))))
+
+write.csv(expanded_circuits_filtered, paste0(folder,"expanded_circuits_filtered.csv"), row.names = FALSE)
+```
+(If filter the TF first, run this chunk)
+Filter the circuit for plot
+```{r}
+# selected TF
+chosen_TF <- c("STAT3", "STAT1", "FOSL2", "FOS", "JUNB", "IRF1", "KLF4")
+expanded_circuits_filtered <- expanded_circuits[which(expanded_circuits$TFs %in% chosen_TF), ]
+print(paste0("unique TFs (after TF fitering): ",length(unique(expanded_circuits_filtered$TFs))))
+print(paste0("unique Peaks (after TF fitering): ",length(unique(expanded_circuits_filtered$peakname))))
+print(paste0("unique Genes (after TF fitering): ",length(unique(expanded_circuits_filtered$Gene_symbol))))
+
+expanded_circuits_filtered <- expanded_circuits_filtered[which(expanded_circuits_filtered$Gene_symbol %in% rna_de_micro_up$gene), ]
+print(paste0("unique TFs (after TF fitering): ",length(unique(expanded_circuits_filtered$TFs))))
+print(paste0("unique Peaks (after TF fitering): ",length(unique(expanded_circuits_filtered$peakname))))
+print(paste0("unique Genes (after TF fitering): ",length(unique(expanded_circuits_filtered$Gene_symbol))))
+
+# Filter to upregulated genes
+write.csv(expanded_circuits_filtered, paste0(folder,"expanded_circuits_filtered.csv"), row.names = FALSE)
+
+```
+
+
+
+
+Create network file
+```{r}
+create_cytoscape_network <- function(data, output_file) {
+    
+    # Create TF-peak edges
+    tf_peak <- data %>%
+        dplyr::select(Source=TFs, Target=peakname) %>%
+        mutate(Interaction="regulates")
+    
+    # Create peak-gene edges
+    peak_gene <- data %>%
+        dplyr::select(Source=peakname, Target=Gene_symbol) %>%
+        mutate(Interaction="associated_with")
+    
+    # Combine edges
+    network <- rbind(tf_peak, peak_gene)
+    
+    # Write output
+    write.table(network, output_file, sep="\t", row.names=FALSE, quote=FALSE)
+    
+    return(network)
+}
+
+create_cytoscape_network_no_overlap <- function(data, output_file) {
+    
+    # Create TF-peak edges
+    tf_peak <- data %>%
+        dplyr::select(Source=TFs, Target=peakname) %>%
+        mutate(Interaction="regulates")
+    
+    # Create peak-gene edges
+    peak_gene <- data %>%
+        dplyr::select(Source=peakname, Target=Gene_symbol) %>%
+        mutate(Interaction="associated_with")
+    
+    # Combine edges
+    network <- rbind(tf_peak, peak_gene)
+    
+    network <- unique(network)
+    
+    # Write output
+    write.table(network, output_file, sep="\t", row.names=FALSE, quote=FALSE)
+    
+    return(network)
+}
+
+create_cytoscape_network(expanded_circuits_filtered,paste0(folder,"cyto_df.csv"))
+create_cytoscape_network_no_overlap(expanded_circuits_filtered,paste0(folder,"cyto_df_no_overlap.csv"))
+```
+ Add node type:
+```{r}
+peaks_up <- expanded_circuits_filtered %>%
+  dplyr::filter(peakname %in% atac_de_micro_up$gene)%>%
+  dplyr::select(peakname) %>%
+  distinct() %>%
+  dplyr::rename(node = peakname) %>%
+  mutate(type = "peak_up")
+
+peaks_down <- expanded_circuits_filtered %>%
+  dplyr::filter(peakname %in% atac_de_micro_down$gene)%>%
+  dplyr::select(peakname) %>%
+  distinct() %>%
+  dplyr::rename(node = peakname) %>%
+  mutate(type = "peak_down")
+
+
+TFs <- expanded_circuits_filtered %>%
+  dplyr::select(TFs) %>%
+  distinct() %>%
+  dplyr::rename(node = TFs) %>%
+  mutate(type = "TFs")
+
+genes_up <- expanded_circuits_filtered %>%
+  dplyr::filter(Gene_symbol %in% rna_de_micro_up$gene)%>%
+  dplyr::select(Gene_symbol) %>%
+  distinct() %>%
+  dplyr::rename(node = Gene_symbol) %>%
+  mutate(type = "de_up")
+
+genes_down <- expanded_circuits_filtered %>%
+  dplyr::filter(Gene_symbol %in% rna_de_micro_down$gene)%>%
+  dplyr::select(Gene_symbol) %>%
+  distinct() %>%
+  dplyr::rename(node = Gene_symbol) %>%
+  mutate(type = "de_down")
+
+# Combine all nodes
+node_types <- bind_rows(TFs, peaks_up,peaks_down,genes_up,genes_down)
+write.table(node_types, paste0(folder,"node_types.csv"), sep="\t", row.names=FALSE, quote=FALSE)
+
+
+```
+ 

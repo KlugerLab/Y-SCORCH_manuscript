@@ -1,0 +1,618 @@
+---
+title: "SCORCH_astrocyte_analysis"
+output: html_document
+date: "2025-04-08"
+---
+
+```{r}
+library(Seurat)
+library(harmony)
+library(ggplot2)
+library(ggpubr)
+library(dplyr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(ggplot2)
+library(enrichplot)
+```
+
+#Read in overall seurat object
+This object is the one with all celltypes and regions integrated in one object.
+```{r}
+scorch_combined <- readRDS("/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/combined/data/seurat_combined_v2.RDS")
+```
+
+#Subset the Astrocytes
+```{r}
+Idents(scorch_combined) <- "consensus_annotation_v3"
+scorch_astrocytes <- subset(scorch_combined, idents = "Astro")
+```
+
+#Process at a sample level
+```{r}
+scorch_astrocytes[["RNA"]] <- split(scorch_astrocytes[["RNA"]], f = scorch_astrocytes$sample_name)
+scorch_astrocytes
+
+scorch_astrocytes <- NormalizeData(scorch_astrocytes)
+scorch_astrocytes <- FindVariableFeatures(scorch_astrocytes)
+scorch_astrocytes <- ScaleData(scorch_astrocytes)
+scorch_astrocytes <- RunPCA(scorch_astrocytes)
+```
+
+#Integrate all the samples
+```{r}
+scorch_astrocytes <- IntegrateLayers(
+  object = scorch_astrocytes, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "harmony_astro",
+  verbose = FALSE
+)
+```
+
+#Visualize using tSNE
+```{r}
+scorch_astro <- FindNeighbors(scorch_astro, reduction = "harmony_astro", dims = 1:30)
+scorch_astro <- FindClusters(scorch_astro, resolution = 1, cluster.name = "harmony_astro_clusters")
+```
+
+```{r}
+scorch_astrocytes <-  RunTSNE(
+  scorch_astrocytes,reduction = "harmony_astro", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:30, perplexity = 200,
+  fast_tsne_path="/banach2/jyc/softwares/FIt-SNE/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=14
+)
+```
+
+
+#Cell Annotation
+I annotated the clusters based on expression of marker genes for each cluster from literature,
+the paper has markers for each of these clusters and expression of those markers
+```{r}
+astro_cluster_ids <- c("0" = "Homeostatic",
+                       "1" = "Homeostatic",
+                       "2" = "Homeostatic",
+                       "3" = "Reactive",
+                       "4" = "Reactive",
+                       "5" = "Reactive", 
+                       "6" = "Reactive", 
+                       "7" = "HIV-Reactive", 
+                       "8" = "Signaling", 
+                       "9" = "Oligo", 
+                       "10" = "Synaptic", 
+                       "11" = "Synaptic", 
+                       "12" = "Homeostatic", 
+                       "13" = "HIV-Reactive", 
+                       "14" = "HIV-Reactive",
+                       "15" = "Ciliated",
+                       "16" = "Hypoxic", 
+                       "17" = "Micro-Astro")
+```
+
+```{r}
+scorch_astrocytes <- RenameIdents(scorch_astrocytes, astro_cluster_ids)
+scorch_astrocytes[["subcluster_labels"]] <- Idents(scorch_astrocytes)
+```
+
+
+#Remove the oligo cluster
+There was a cluster of cells that expressed both oligodendrocyte markers and astrocyte markers that I removed because it was large and other papers had removed similar clusters in their analysis.  
+```{r}
+clean_scorch_astro <- subset(scorch_astrocytes, idents = c("Homeostatic", "Reactive", "HIV-Reactive", "Signaling", "Synaptic", "Ciliated", "Hypoxic", "Micro-Astro"))
+```
+
+
+# Figures
+## Figure 1
+### B
+```{r}
+#load in the edgeR results
+top_edgeR_ctr_all <- de_edgeR  %>%
+  dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
+  dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb) %>%
+  dplyr::filter((logFC < -0.25)&(p_adj.glb < 0.05))
+
+top_edgeR_ctr_all$method <- "edgeR"
+
+cell_types <- unique(top_edgeR_ctr_all$cluster_id)
+top_edgeR_ctr_list <- lapply(cell_types,function(cp) top_edgeR_ctr_all[top_edgeR_ctr_all$cluster_id == cp,])
+names(top_edgeR_ctr_list) <- cell_types
+
+cp <- "Astro"
+top_edgeR_ctr <- top_edgeR_ctr_list[[cp]]
+
+# go analysis
+#de <- AnnotationDbi::select(Homo.sapiens, keys = unique(top_edgeR_ctr$gene), keytype = "SYMBOL", columns="ENTREZID")
+#degs_converted_top_up <- top_edgeR_ctr %>%
+#  mutate(SYMBOL=gene) %>%
+#  left_join(de,by="SYMBOL") %>%
+#  dplyr::filter(!is.na(ENTREZID))
+
+# 
+#gene_list <- degs_converted_top_up$logFC
+#names(gene_list) <- degs_converted_top_up$ENTREZID
+
+ego_ctr <- enrichGO(gene          = top_edgeR_ctr$gene,
+                keyType       = "SYMBOL",
+                OrgDb         = org.Hs.eg.db,
+                universe      = genes,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+ego_ctr_df <- ego_ctr@result
+# compute -log10(p.adjust) and keep only the top 10
+ego_ctr_df <- ego_ctr_df %>%
+  mutate(logP = -log10(p.adjust)) %>%
+  arrange(desc(logP)) %>%
+  slice_head(n = 10)  # plot top 10 terms
+
+
+ggplot(ego_ctr_df, aes(x = logP, y = reorder(Description, logP))) +
+  geom_bar(stat = "identity", fill = "#CCE5FF", width = 0.7) +
+  geom_text(aes(x = 0.5, label = Description), 
+            hjust = 0, 
+            color = "black", 
+            size = 8, 
+            fontface = "italic") +  
+  theme_minimal(base_size = 15) +
+  labs(
+    x = "-log10(p.adjust)", 
+    y = NULL, 
+    title = "Top 10 Enriched GO Terms in PWoH Astrocytes"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  
+    axis.text.x = element_text(size = 14, face = "bold"), 
+    axis.line.x = element_line(color = "black"),  
+    axis.line.y = element_line(color = "black"),  
+    panel.grid.major.x = element_line(color = "gray90", linetype = "dashed"),
+    panel.grid.major.y = element_blank(),  
+    axis.text.y = element_blank(),  
+    axis.ticks.y = element_blank(), 
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20)  
+  )
+
+
+#PWH
+top_edgeR_hiv_all <- de_edgeR  %>%
+  dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
+  dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb) %>%
+  dplyr::filter((logFC < 0.25)&(p_adj.glb < 0.05))
+
+top_edgeR_hiv_all$method <- "edgeR"
+
+cell_types <- unique(top_edgeR_hiv_all$cluster_id)
+top_edgeR_hiv_list <- lapply(cell_types,function(cp) top_edgeR_hiv_all[top_edgeR_hiv_all$cluster_id == cp,])
+names(top_edgeR_hiv_list) <- cell_types
+
+cp <- "Astro"
+top_edgeR_hiv <- top_edgeR_hiv_list[[cp]]
+
+ego_hiv <- enrichGO(gene          = top_edgeR_hiv$gene,
+                keyType       = "SYMBOL",
+                OrgDb         = org.Hs.eg.db,
+                universe      = genes,
+                ont           = "BP",
+                pAdjustMethod = "BH",
+                pvalueCutoff  = 0.05,
+                qvalueCutoff  = 0.05,
+                readable      = TRUE)
+ego_hiv_df <- ego_hiv@result
+
+# Compute -log10(p.adjust) and keep only the top 10
+ego_hiv <- ego_hiv %>%
+  mutate(logP = -log10(p.adjust)) %>%
+  arrange(desc(logP)) %>%
+  slice_head(n = 10)  # Select top 10 terms
+
+# Plot
+ggplot(ego_hiv, aes(x = logP, y = reorder(Description, logP))) +
+  geom_bar(stat = "identity", fill = "#FFEDD5", width = 0.7) +
+  geom_text(aes(x = 0.1, label = Description), 
+            hjust = 0, 
+            color = "black", 
+            size = 8, 
+            fontface = "italic") +
+  theme_minimal(base_size = 15) +
+  labs(
+    x = "-log10(p.adjust)", 
+    y = NULL, 
+    title = "Top 10 Enriched GO Terms in PWH Astrocytes"
+  ) +
+  theme(
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),  
+    axis.text.x = element_text(size = 14, face = "bold"),  
+    axis.line.x = element_line(color = "black"), 
+    axis.line.y = element_line(color = "black"),
+    panel.grid.major.x = element_line(color = "gray90", linetype = "dashed"),
+    panel.grid.major.y = element_blank(),  
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(), 
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20)  
+  )
+```
+
+
+### D
+```{r}
+dim_plot <- DimPlot(
+  object = clean_scorch_astro,
+  reduction = "tsne",                 
+  group.by = "subcluster_labels",     
+  label = TRUE,                     
+  repel = TRUE) +
+  theme_void() +                      
+  theme(
+    legend.position = "none",         
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16)) +
+  labs(title = "t-SNE with Subcluster Labels")
+
+
+#FeaturePlots for marker  genes
+feature_plots <- FeaturePlot(
+  object = clean_scorch_astro,
+  features = c("GFAP", "CD44", "AQP4", "OSMR", "SERPINA3", "CHI3L1", "SYT1", "GRIA1"),
+  combine = FALSE
+)
+
+feature_plots <- lapply(feature_plots, function(p) {
+  p + 
+    theme_void() + 
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 10)
+    )
+})
+
+# attempting to organize the feature plots in a specific way
+feature_plots_top <- feature_plots[1:4]  
+feature_plots_bottom <- feature_plots[5:8]
+
+# 2x2 grid
+feature_grid_top <- wrap_plots(feature_plots_top, ncol = 2)
+
+# 1x4 bottom row
+feature_grid_bottom <- wrap_plots(feature_plots_bottom, ncol = 4)
+```
+
+###E
+```{r}
+#find the markers for HIV-reactive cells
+hiv_reactive_markers <- FindMarkers(clean_scorch_astro, ident.1 = "HIV-Reactive", min.pct = 0.05)
+geneList <- hiv_reactive_markers$avg_log2FC
+names(geneList) <- rownames(hiv_reactive_markers)
+
+gene <- names(geneList)[abs(geneList) > 1.5]
+
+#use enrichGO
+hiv_reactive_pathway_test <- enrichGO(gene = gene,
+                    keyType       = "SYMBOL",
+                    OrgDb         = org.Hs.eg.db,
+                    ont           = "BP",
+                    pAdjustMethod = "BH",
+                    pvalueCutoff  = 0.01,
+                    qvalueCutoff  = 0.05,
+                    readable      = TRUE)
+
+hm <- heatplot(hiv_reactive_pathway_test, foldChange = geneList, showCategory = 10) +
+  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+  theme_classic() + 
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, size = 1),  
+    axis.text.y = element_text(size = 16, color = "black", family = "Arial"),
+    axis.title.y = element_text(size = 16, face = "bold", color = "black", family = "Arial"),
+    axis.text.x = element_text(size = 16, color = "black", angle = 45, hjust = 1, family = "Arial"),
+    text = element_text(color = "black"),
+    legend.text = element_text(size = 12, family = "Arial"),
+    legend.title = element_text(size = 14, face = "bold", family = "Arial"),
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5, family = "Arial")  
+  ) +
+  RotatedAxis() +
+  ggtitle(expression(bold("GO Enrichment Heatmap for HIV-Reactive Astrocytes")))
+```
+
+#Supplementary Figures
+##S12a
+```{r}
+#scorch meta is the scorch_combined@meta.data
+astro_plot_data <- scorch_meta %>%
+  dplyr::mutate(
+    region = dplyr::case_when(
+      grepl("_INS$", sample_name) ~ "INS",
+      grepl("_PFC$", sample_name) ~ "PFC",
+      grepl("_VST$", sample_name) ~ "VST",
+      TRUE ~ "Unknown" # Default if no match
+    )
+  ) %>%
+  dplyr::group_by(sample_name, region, condition_new) %>%
+  dplyr::summarize(
+    total_cells = n(),
+    astro_cells = sum(consensus_annotation_v3 == "Astro"),
+    astro_percentage = (astro_cells / total_cells) * 100,
+    .groups = "drop"
+  )
+
+astro_violin_plot <- ggplot(astro_plot_data, aes(x = condition_new, y = astro_percentage, fill = condition_new)) +
+  geom_violin(trim = TRUE, alpha = 0.6, position = position_dodge(0.8)) +
+  geom_jitter(size = 2, alpha = 0.8, position = position_dodge(0.8)) +
+  scale_fill_manual(values = c("CTR" = "#0072B2", "HIV" = "darkorange1")) +
+  stat_compare_means(
+    comparisons = comparisons,
+    method = "t.test",
+    label = "p.format"
+  ) +
+  facet_wrap(~region, scales = "free_y") +
+  labs(
+    title = "Abundance of Astrocytes by Region and Condition",
+    x = "Condition",
+    y = "Astrocyte Cell Percentage (%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(face = "bold"),
+    axis.title.x = element_text(face = "bold", size = 14), 
+    axis.title.y = element_text(face = "bold", size = 14), 
+    strip.text = element_text(face = "bold", size = 12), 
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5), 
+    legend.position = "none",
+    panel.grid.major = element_line(color = "gray80", linetype = "dotted")
+  )
+```
+
+##S12b
+```{r}
+metadata <- clean_scorch_astro@meta.data %>%
+  group_by(sample_ids, subcluster_labels, condition_new) %>%
+  summarise(count = n(), .groups = "drop")
+
+# calculate proportions within each subcluster label
+metadata <- metadata %>%
+  group_by(subcluster_labels) %>%
+  mutate(proportion = count / sum(count) * 100)
+
+ctr_samples <- unique(metadata$sample_ids[metadata$condition_new == "CTR"])
+hiv_samples <- unique(metadata$sample_ids[metadata$condition_new == "HIV"])
+
+ctr_colors <- colorRampPalette(c("lightblue", "blue"))(length(ctr_samples))
+hiv_colors <- colorRampPalette(c("pink", "red"))(length(hiv_samples))
+
+color_map <- c(setNames(ctr_colors, ctr_samples), setNames(hiv_colors, hiv_samples))
+
+plot <- ggplot(metadata, aes(x = subcluster_labels, y = proportion, fill = sample_ids)) +
+  geom_bar(stat = "identity", position = "stack", color = "black") + 
+  scale_fill_manual(values = color_map) +
+  theme_minimal(base_size = 14) + 
+  theme(
+    panel.grid = element_blank(),             
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 12),
+    axis.text.y = element_text(size = 12),   
+    axis.title.x = element_text(size = 16, face = "bold"), 
+    axis.title.y = element_text(size = 16, face = "bold"),
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5), 
+    legend.text = element_text(size = 12),   
+    legend.title = element_text(size = 14, face = "bold") 
+  ) +
+  labs(
+    x = "Astrocyte Subtype",
+    y = "Proportion (%)",
+    fill = "Sample IDs",
+    title = "Sample Proportions of Astrocyte Subtype"
+  )
+```
+
+
+##S13a
+```{r}
+clean_scorch_astro$condition_updated <- ifelse(
+  clean_scorch_astro$condition_new == "CTR", "PWoH",
+  ifelse(clean_scorch_astro$condition_new == "HIV", "PWH",
+  clean_scorch_astro$condition_new))
+  
+DotPlot(clean_scorch_astro, features = c("IL1B", "IL6", "IL6R", "IL1R1", "C3"), split.by = "condition_updated")
+```
+
+
+##S13b
+I've included the code for one region below, it's the same for all the regions, you just need to load the signac objects and follow the same format for the other regions.
+```{r}
+#find the barcodes that overlap with RNA and ATAC
+#load in the signac object for the regions --> signac_ins
+#convert the ATAC formatting to RNA formatting for cell names
+atac_barcodes <- sapply(colnames(signac_ins),function(cname){
+  splited = strsplit(cname,'_')[[1]]
+  return(paste0(splited[2],'-',splited[1]))
+})
+
+#find the overlap of cells and subset based on those cells
+rna_barcodes <- colnames(clean_scorch_astro)
+barcodes_clean <- gsub("-INS$", "", rna_barcodes)
+sum(atac_barcodes %in% barcodes_clean)
+overlap_barcodes <- atac_barcodes[atac_barcodes %in% barcodes_clean]
+
+signac_ins_astro <- subset(signac_ins, cells = overlap_barcodes)
+
+#add the metadata (subcluster labels to signac object)
+clean_meta <- clean_scorch_astro@meta.data
+clean_meta$barcodes <- gsub("-INS$", "", row.names(clean_meta))
+meta_to_add <- data.frame(row.names = clean_meta$barcodes, labels = clean_meta$subcluster_labels)
+signac_ins_astro <- AddMetaData(signac_ins_astro, meta_to_add)
+
+ins_peaks <- FindMarkers(
+  object = signac_ins_astro,
+  ident.1 = "HIV-Reactive",
+  test.use = "wilcox",
+  min.pct = 0.1
+)
+
+ins_peaks <- ins_peaks %>% filter(avg_log2FC > 0, p_val_adj < 0.05)
+ins_peaks$gene <- rownames(ins_peaks)
+
+ego_vst_h <- enrichGO(gene          = ins_peaks$gene,
+                      keyType       = "SYMBOL",
+                      OrgDb         = org.Hs.eg.db,
+                      ont           = "BP",
+                      pAdjustMethod = "BH",
+                      pvalueCutoff  = 0.01,
+                      qvalueCutoff  = 0.05,
+                      readable      = TRUE)
+
+
+hiv_pathway_plot <- dotplot(ego_vst_h, showCategory=12) + ggtitle("Top INS ATAC HIV-Reactive Pathways")
+```
+
+##S15
+```{r}
+# downregulated genes for each celltype
+for (cell in names(deg_results)) {
+    degs <- deg_results[[cell]]
+  degs$Gene <- rownames(degs)
+  
+  degs <- degs %>% 
+    filter(p_val_adj < 0.05, avg_log2FC < -0.5, pct.1 > 0.05)
+  
+  geneList <- degs$avg_log2FC
+  names(geneList) <- degs$Gene
+  
+  #make sure we have enough degs for pathway analysis
+  if (length(geneList) > 10) {
+    
+    pathway_test <- tryCatch({
+      enrichGO(
+        gene          = names(geneList),
+        keyType       = "SYMBOL",
+        OrgDb         = org.Hs.eg.db,
+        ont           = "BP",  
+        pAdjustMethod = "BH",
+        pvalueCutoff  = 0.01,
+        qvalueCutoff  = 0.05,
+        readable      = TRUE
+      )
+    }, error = function(e) NULL)  # error check
+    
+    #see if there are enrichment results
+    if (!is.null(pathway_test) && nrow(as.data.frame(pathway_test@result)) > 0) {
+      
+      #get just the top 5 pathways
+      pathway_df <- as.data.frame(pathway_test@result) %>%
+        arrange(p.adjust) %>%  
+        slice_head(n = 5) %>% 
+        dplyr::select(Description, geneID) %>%
+        separate_rows(geneID, sep = "/") %>%
+        inner_join(degs, by = c("geneID" = "Gene")) %>%  
+        group_by(Description) %>%
+        top_n(10, wt = abs(avg_log2FC))  #keep only the top 10 genes per pathway
+      
+      # order the genes based on pathway
+      pathway_df$geneID <- factor(pathway_df$geneID, levels = unique(pathway_df$geneID))
+      
+      pathway_df$Description <- factor(pathway_df$Description, levels = rev(unique(pathway_df$Description)))
+      
+      p <- ggplot(pathway_df, aes(x = geneID, y = Description, fill = avg_log2FC)) +
+        geom_tile(color = "white") +
+        scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+        theme_minimal(base_size = 14) +
+        theme(
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 14, color = "black"),
+          axis.title.y = element_text(size = 14, color = "black"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()
+        ) +
+        labs(title = paste("GO Enrichment (Downregulated) -", cell),
+             x = "geneID",
+             y = "Pathway",
+             fill = "Log2FC")
+      
+     
+      heatmap_list[[cell]] <- p
+    } else {
+      message(paste("No significant pathways found for", cell, "- Skipping heatmap."))
+    }
+  } else {
+    message(paste("Not enough significant genes for", cell, "- Skipping enrichment analysis."))
+  }
+}
+
+heatmap_list
+
+#save the output
+```
+
+
+#Upregulated DEGs
+```{r}
+for (cell in names(deg_results)) {
+    degs <- deg_results[[cell]]
+  degs$Gene <- rownames(degs)
+  
+  degs <- degs %>% 
+    filter(p_val_adj < 0.05, avg_log2FC < 0.5, pct.1 > 0.05)
+  
+  geneList <- degs$avg_log2FC
+  names(geneList) <- degs$Gene
+  
+  #make sure we have enough degs for pathway analysis
+  if (length(geneList) > 10) {
+    
+    pathway_test <- tryCatch({
+      enrichGO(
+        gene          = names(geneList),
+        keyType       = "SYMBOL",
+        OrgDb         = org.Hs.eg.db,
+        ont           = "BP",  
+        pAdjustMethod = "BH",
+        pvalueCutoff  = 0.01,
+        qvalueCutoff  = 0.05,
+        readable      = TRUE
+      )
+    }, error = function(e) NULL)  # error check
+    
+    #see if there are enrichment results
+    if (!is.null(pathway_test) && nrow(as.data.frame(pathway_test@result)) > 0) {
+      
+      #get just the top 5 pathways
+      pathway_df <- as.data.frame(pathway_test@result) %>%
+        arrange(p.adjust) %>%  
+        slice_head(n = 5) %>% 
+        dplyr::select(Description, geneID) %>%
+        separate_rows(geneID, sep = "/") %>%
+        inner_join(degs, by = c("geneID" = "Gene")) %>%  
+        group_by(Description) %>%
+        top_n(10, wt = abs(avg_log2FC))  #keep only the top 10 genes per pathway
+      
+      # order the genes based on pathway
+      pathway_df$geneID <- factor(pathway_df$geneID, levels = unique(pathway_df$geneID))
+      
+      pathway_df$Description <- factor(pathway_df$Description, levels = rev(unique(pathway_df$Description)))
+      
+      p <- ggplot(pathway_df, aes(x = geneID, y = Description, fill = avg_log2FC)) +
+        geom_tile(color = "white") +
+        scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
+        theme_minimal(base_size = 14) +
+        theme(
+          axis.text.x = element_text(angle = 45, hjust = 1, size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 14, color = "black"),
+          axis.title.y = element_text(size = 14, color = "black"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()
+        ) +
+        labs(title = paste("GO Enrichment (Upregulated) -", cell),
+             x = "geneID",
+             y = "Pathway",
+             fill = "Log2FC")
+      
+     
+      heatmap_list[[cell]] <- p
+    } else {
+      message(paste("No significant pathways found for", cell, "- Skipping heatmap."))
+    }
+  } else {
+    message(paste("Not enough significant genes for", cell, "- Skipping enrichment analysis."))
+  }
+}
+```
+
