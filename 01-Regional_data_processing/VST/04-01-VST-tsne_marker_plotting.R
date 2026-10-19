@@ -36,8 +36,8 @@ table(seu.obj@meta.data$sample_ids[seu.obj@meta.data$putative_ext])
 ## answers the reviewer request on how many excluded samples came from each
 ## condition, whether the step was pre-specified, and how much findings depend on it.
 ##
-## On corrected data the five contaminated samples score 0.185-0.444 and every
-## other sample is below 0.007 - a ~30-fold gap, not a gradient. That step is the
+## On corrected data the five contaminated samples score 0.225-0.444 and every
+## other sample is below 0.008 - a ~30-fold gap, not a gradient. That step is the
 ## evidence for dissection variability over "biologically meaningful bordering
 ## tissue": a boundary effect would vary smoothly across dissections.
 ##

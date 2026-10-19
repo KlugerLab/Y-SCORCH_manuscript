@@ -107,7 +107,7 @@ magical_tag <- function(region, celltype) paste0(region, "_new_", gsub("[/ ]", "
 ## a sample's nuclei in excitatory clusters.
 ##
 ## Sample-level threshold: on corrected data the five contaminated samples score
-## 0.185-0.444 and every other sample is below 0.007, so 0.20 sits in an empty
+## 0.225-0.444 and every other sample is below 0.008, so 0.20 sits in an empty
 ## gap of about 30-fold rather than on a knife edge.
 VST_SAMPLE_EXT_THRESHOLD <- 0.20
 
