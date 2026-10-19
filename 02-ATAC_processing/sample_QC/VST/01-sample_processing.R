@@ -1,4 +1,7 @@
 # QC each sample using Signac
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
 
 library(Signac)
 library(Seurat)
@@ -6,9 +9,13 @@ library(dplyr)
 library(EnsDb.Hsapiens.v86)
 library(BSgenome.Hsapiens.UCSC.hg38)
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/02-ATAC_processing/sampleQC_redo/VST/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-META_PATH = "/banach2/SCORCH/data/metadata/sample_metadata_v3.csv"
+## REVISION: working directory is set under OUT_ROOT by rerun_setup() instead of a
+##   hard-coded setwd().
+rerun_setup("02-ATAC_processing/sampleQC_redo/VST",
+            subdirs = c("data", "figures/qc_metrics"))
+META_PATH = SAMPLE_META   ## REVISION: rebuilt sample sheet
 
 
 sample_meta <- read.csv(META_PATH)
@@ -21,9 +28,28 @@ sample_meta_filter = as.data.frame(sample_meta) %>%
 sample_meta_filter$cellranger_atac_path <- sapply(sample_meta_filter$cellranger_path,function(crpath) gsub("/filtered_feature_bc_matrix/", "/",crpath))
 
 # load the atac data for each sample
-count_list <- lapply(sample_meta_filter$cellranger_atac_path,function(crpath)  
-  Read10X_h5(paste0(crpath,"filtered_feature_bc_matrix.h5")))
+## REVISION: read the CellRanger MTX directory instead of the .h5 file.
+##   CellRanger writes the same filtered matrix in both formats (checked on one
+##   sample: identical Peaks 154,691 x 14,569), so the `$Peaks` indexing below is
+##   unchanged. HDF5 >= 1.10 requests a POSIX file lock on every open, including
+##   read-only, and on the NFS data mount (no lock service, `hard` mount) that
+##   request hangs indefinitely; gzipped MTX takes no lock. Setting
+##   HDF5_USE_FILE_LOCKING=FALSE (done in revision/docker/run.sh) only helps jobs
+##   launched through that script. MTX parsing costs ~47 s per sample. Per-sample
+##   progress messages added.
+.n_samp <- nrow(sample_meta_filter)
+count_list <- lapply(seq_len(.n_samp), function(i) {
+  crpath <- sample_meta_filter$cellranger_atac_path[i]
+  sid    <- sample_meta_filter$sample_ids[i]
+  t0 <- Sys.time()
+  x  <- Read10X(paste0(crpath, "filtered_feature_bc_matrix/"))
+  message(sprintf("[atac] %2d/%2d  %-16s peaks %d x %d  (%.0fs)",
+                  i, .n_samp, sid, nrow(x$Peaks), ncol(x$Peaks),
+                  as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+  x
+})
 names(count_list) <- sample_meta_filter$sample_ids
+message("[atac] loaded ", length(count_list), " samples")
 
 fragpath_list <- lapply(sample_meta_filter$cellranger_atac_path,function(crpath) paste0(crpath,"atac_fragments.tsv.gz"))
 names(fragpath_list) <- sample_meta_filter$sample_ids
@@ -125,6 +151,24 @@ signac.obj.list_sub <- lapply(RNA_sids,function(sid){
 names(signac.obj.list_sub) <- RNA_sids
 signac.obj.list_sub <- signac.obj.list_sub[lengths(signac.obj.list_sub)!=0]
 
+## REVISION: report the surviving sample count and checkpoint the filtered
+##   per-sample list. Loading the samples and computing NucleosomeSignal/
+##   TSSEnrichment take ~5 h; the steps below are comparatively cheap.
+.dropped <- setdiff(RNA_sids, names(signac.obj.list_sub))
+message("[atac] samples passing RNA intersection + QC: ",
+        length(signac.obj.list_sub), " of ", length(RNA_sids))
+if (length(.dropped))
+  message("[atac] dropped (no cells passed): ", paste(.dropped, collapse = ", "))
+message("[atac] cells per surviving sample: ",
+        paste(sprintf("%s=%d", names(signac.obj.list_sub),
+                      vapply(signac.obj.list_sub, ncol, integer(1))),
+              collapse = "  "))
+
+.ckpt <- "./data/signac_obj_list_sub.rds"
+saveRDS(signac.obj.list_sub, .ckpt)
+message("[atac] checkpoint -> ", .ckpt,
+        "  (rerun from here if a later step fails)")
+
 # add RNA metadata
 for (sid in names(signac.obj.list_sub)) {
   metadata_sid <- RNA_metadata[paste0(colnames(signac.obj.list_sub[[sid]]),"-",sid,"-","VST"),]
@@ -162,11 +206,21 @@ signac.obj.list.merged <- lapply(names(signac.obj.list_sub), function(sid){
 })
 names(signac.obj.list.merged) <- names(signac.obj.list_sub)
 
+## REVISION: the published script hard-coded the merge range (c(2:24)). If QC or
+##   the RNA-barcode intersection drops a sample, merge() fails or silently drops
+##   samples; the range is now derived from the list length.
+.n_obj <- length(signac.obj.list.merged)
+message("[atac] merging ", .n_obj, " sample objects: ",
+        paste(names(signac.obj.list.merged), collapse = ", "))
+stopifnot(.n_obj >= 2, !any(duplicated(names(signac.obj.list.merged))))
+
 signac.obj.combined <- merge(
   x = signac.obj.list.merged[[1]],
-  y = signac.obj.list.merged[c(2:24)],
+  y = signac.obj.list.merged[2:.n_obj],
   add.cell.ids = names(signac.obj.list.merged)
 )
+message("[atac] merged: ", ncol(signac.obj.combined), " cells x ",
+        nrow(signac.obj.combined), " peaks")
 
 
 saveRDS(signac.obj.combined,"./data/signac_combined.RDS")

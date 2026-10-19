@@ -1,24 +1,42 @@
 # plot the number of DEs
+#
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
 library(ggplot2)
 library(dplyr)
 library(ggrepel)
 library(cowplot)
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/"
-setwd(wd)
+## REVISION: packages used below but not loaded in the published script.
+library(Seurat)
+library(ggpubr)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+## REVISION: run against either DE result set.
+##   SCORCH_DE_COUNTS = "uncorrected" (default, the primary analysis) | "corrected"
+##   Inputs and outputs both carry the suffix, so the two never mix and the
+##   corrected figures cannot overwrite the primary ones.
+DE_COUNTS <- match.arg(Sys.getenv("SCORCH_DE_COUNTS", unset = "uncorrected"),
+                       c("uncorrected", "corrected"))
+OUT_SFX <- if (DE_COUNTS == "corrected") "_corrected" else ""
+## every png()/pdf()/ggsave() in this script picks this up via revision/config/paths.R
+options(scorch.out_suffix = OUT_SFX)
+message("[fig] DE result set: ", DE_COUNTS)
 
-INS_edgeR <- readRDS("./INS/results/INS_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+## REVISION: working directory is set by rerun_setup() under OUT_ROOT instead of a hardcoded server path.
+rerun_setup("03-DE_analysis",
+            subdirs = c("INS/results", "PFC//results", "VST//results", "plotting/figures", "plotting/figures/heatmap_n_DE_"))
+INS_edgeR <- readRDS(paste0("./INS/results/INS_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 INS_all <- INS_edgeR %>%
   ungroup() %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb,region) 
 
-PFC_edgeR <- readRDS("./PFC//results/PFC_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+PFC_edgeR <- readRDS(paste0("./PFC//results/PFC_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 PFC_all <- PFC_edgeR %>%
   ungroup() %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb,region) 
 
-VST_edgeR <- readRDS("./VST//results/VST_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+VST_edgeR <- readRDS(paste0("./VST//results/VST_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 
 VST_all <- VST_edgeR %>%
   ungroup() %>%
@@ -74,13 +92,46 @@ de_edgeR.top.up <- de_edgeR.top %>%
 de_edgeR.top.down <- de_edgeR.top %>%
   dplyr::filter(direction == "HIV DOWN")
 
+## REVISION: the published panels drew only cell types with >= 1 DEG, so a type
+##   pbDS never tested (it drops a type silently when the design loses rank, e.g.
+##   6 of the 9 VST MSN subtypes) looked the same as a type with no DEGs. Here
+##   every cell type in the region's pseudobulk is recorded as tested (count,
+##   0 included) or not tested ("n.t.") in the csv; the plot keeps tested types only.
+.present <- lapply(setNames(nm = c("INS", "PFC", "VST")), function(R)
+  SummarizedExperiment::assayNames(readRDS(paste0("./", R, "/data/pseudo_bulk", OUT_SFX, ".rds"))))
+.tested <- list(INS = unique(as.character(INS_edgeR$cluster_id)),
+                PFC = unique(as.character(PFC_edgeR$cluster_id)),
+                VST = unique(as.character(VST_edgeR$cluster_id)))
+.unknown <- setdiff(unlist(.present), cell_types_consensus_levels)
+if (length(.unknown)) message("[nDE] not in the published cell-type order, left out: ", paste(.unknown, collapse = ", "))
+.grid <- do.call(rbind, lapply(names(.present), function(R) {
+  ct <- intersect(cell_types_consensus_levels, .present[[R]])
+  expand.grid(region = R, cluster_id = ct, direction = c("HIV UP", "HIV DOWN"), stringsAsFactors = FALSE)
+}))
+.grid <- .grid %>%
+  left_join(de_edgeR.top %>% mutate(cluster_id = as.character(cluster_id), direction = as.character(direction)) %>%
+              dplyr::select(region, cluster_id, direction, n_DEs), by = c("region", "cluster_id", "direction")) %>%
+  mutate(tested = mapply(function(r, c) c %in% .tested[[r]], region, cluster_id),
+         n_DEs  = ifelse(tested, dplyr::coalesce(n_DEs, 0L), NA_integer_),
+         label  = ifelse(tested, as.character(n_DEs), "n.t."),
+         cluster_id_coarse = factor(cell_types_coarse_levels[cluster_id], levels = c("Ext", "MSNs", "Inh", "Glial")),
+         cluster_id = factor(cluster_id, levels = cell_types_consensus_levels))
+for (R in names(.present))
+  message(sprintf("[nDE] %s: %d cell types present, %d tested, not tested: %s", R, length(intersect(cell_types_consensus_levels, .present[[R]])),
+                  length(.tested[[R]]), paste(setdiff(intersect(cell_types_consensus_levels, .present[[R]]), .tested[[R]]), collapse = ", ")))
+utils::write.csv(.grid, paste0("./plotting/figures/heatmap_n_DE_counts", OUT_SFX, ".csv"), row.names = FALSE)
+## Untested types get no column; tested types with 0 DEGs keep theirs. The .csv
+##   above still lists every type, tested or not.
+de_edgeR.top.up   <- .grid %>% dplyr::filter(direction == "HIV UP", tested)
+de_edgeR.top.down <- .grid %>% dplyr::filter(direction == "HIV DOWN", tested)
+
 # plot as heatmaps
 for (re in c("PFC","INS","VST")) {
   p0 <- ggplot(de_edgeR.top.up[de_edgeR.top.up$region == re,], aes(x = cluster_id, y = region, fill = n_DEs)) +
     #facet_wrap(~region, scales='free',nrow=3)+
     geom_tile()+
-    geom_text(data=de_edgeR.top.up[de_edgeR.top.up$region == re,],aes(y=region,label=n_DEs),size=10)+
-    scale_fill_continuous(low = "white", high = "red",na.value = "white")+
+    geom_text(data=de_edgeR.top.up[de_edgeR.top.up$region == re,],aes(y=region,label=label),size=10)+  ## REVISION: tile labels
+    scale_fill_continuous(low = "white", high = "red",na.value = "grey85")+  ## REVISION: published na.value = "white"
     theme_void()+
     theme(
       axis.text=element_text(size=25),
@@ -153,8 +204,8 @@ for (re in c("PFC","INS","VST")) {
   p1 <- ggplot(de_edgeR.top.down[de_edgeR.top.down$region == re,], aes(x = cluster_id, y = region, fill = n_DEs)) +
     #facet_wrap(~region, scales='free',nrow=3)+
     geom_tile()+
-    geom_text(data=de_edgeR.top.down[de_edgeR.top.down$region == re,],aes(y=region,label=n_DEs),size=10)+
-    scale_fill_continuous(low = "white", high = "blue",na.value = "white")+
+    geom_text(data=de_edgeR.top.down[de_edgeR.top.down$region == re,],aes(y=region,label=label),size=10)+  ## REVISION: tile labels
+    scale_fill_continuous(low = "white", high = "blue",na.value = "grey85")+  ## REVISION: published na.value = "white"
     theme_void()+
     theme(
       axis.text=element_text(size=25),

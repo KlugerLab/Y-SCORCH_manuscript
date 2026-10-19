@@ -1,3 +1,7 @@
+# REVISION: run on the CellBender-corrected data; paths (including fast_tsne_path) come
+# from revision/config/paths.R and outputs go to OUT_ROOT. Changes from the published
+# script are marked ## REVISION.
+
 library(Seurat)
 library(SingleCellExperiment)
 library(tidyr)
@@ -5,10 +9,17 @@ library(dplyr)
 library(cowplot)
 options(future.globals.maxSize = 1e12)
 
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
+REGION <- "INS"
 
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/INS/"
-setwd(wd)
+## REVISION: working directory is set under OUT_ROOT instead of a hard-coded server path.
+rerun_setup(file.path("01-Regional_data_processing", REGION),
+            subdirs = "data/03-cell_integration_vis")
+
+## REVISION: the published script used sample_meta_filter without defining it (it was
+## carried over from the 02-cell_annotation session); it is now loaded explicitly.
+sample_meta_filter <- load_sample_meta(REGION)
 
 sce.obj <- readRDS("./data/02-cell_annotation/processed_sce_obj.rds")
 count_data <- sce.obj@assays@data$counts
@@ -36,7 +47,7 @@ seu.obj <- FindClusters(seu.obj, resolution = 3, cluster.name = "seurat_clusters
 # visualization
 seu.obj <-  RunTSNE(
   seu.obj,reduction = "harmony", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:50, perplexity = 200,
-  fast_tsne_path="/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=12
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=12
 )
 
 p1 <- DimPlot(seu.obj,reduction = "tsne",group.by = "sample_ids",label=F,
@@ -106,8 +117,23 @@ seu.obj_sub <- IntegrateLayers(
 # visualization
 seu.obj_sub <-  RunTSNE(
   seu.obj_sub,reduction = "harmony", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:50, perplexity = 200,
-  fast_tsne_path="/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=12
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=12
 )
+
+## REVISION (reviewer request): UMAP alongside the tSNE above.
+##   Same harmony reduction and dims, so the two embeddings are directly
+##   comparable. Stored on the object before it is saved. Not part of the
+##   published analysis.
+##
+##   Threads: Seurat passes n_threads = future::nbrOfWorkers() to uwot, so a
+##   direct n_threads argument to RunUMAP is silently dropped. run_umap_threaded()
+##   sets the future plan for the call and restores it afterwards.
+seu.obj_sub <- run_umap_threaded(seu.obj_sub, reduction = "harmony", dims = 1:50)
+
+## REVISION: write named tSNE and UMAP panels. The published scripts call
+##   DimPlot() with no device open, so under Rscript every plot lands unlabelled
+##   in Rplots.pdf and the embedding figures cannot be found.
+save_embedding_panels(seu.obj_sub, prefix = "03_INS_cell_integration_visualization")
 p1 <- DimPlot(seu.obj_sub,reduction = "tsne",group.by = "sample_ids",label=F,
               raster = F,shuffle = T,label.size = 5,pt.size = 0.5)
 p2 <- DimPlot(seu.obj_sub,reduction = "tsne",group.by = "consensus_annotation_v2",label=T,
@@ -115,9 +141,12 @@ p2 <- DimPlot(seu.obj_sub,reduction = "tsne",group.by = "consensus_annotation_v2
 p3 <- DimPlot(seu.obj_sub,reduction = "tsne",group.by = "seurat_clusters",label=T,
               raster = F,shuffle = T,label.size = 5,pt.size = 0.5)
 
+## REVISION: the published code compared against the strings "True"/"False"; read.csv()
+## gives logicals here, so neither branch fired and condition_new stayed TRUE/FALSE.
 seu.obj_sub@meta.data[,"condition_new"] <- sapply(seu.obj_sub@meta.data$sample_name,function(sid) sample_meta_filter[sample_meta_filter$sample_name == sid,"hiv_jay_v2"])
-seu.obj_sub@meta.data$condition_new[seu.obj_sub@meta.data$condition_new == "True"] <- "HIV"
-seu.obj_sub@meta.data$condition_new[seu.obj_sub@meta.data$condition_new == "False"] <- "CTR"
+seu.obj_sub@meta.data$condition_new[seu.obj_sub@meta.data$condition_new == TRUE] <- "HIV"
+seu.obj_sub@meta.data$condition_new[seu.obj_sub@meta.data$condition_new == FALSE] <- "CTR"
+stopifnot(all(seu.obj_sub@meta.data$condition_new %in% c("HIV","CTR")))
 
 
 p4 <- DimPlot(seu.obj_sub,reduction = "tsne",group.by = "condition_new",label=F,

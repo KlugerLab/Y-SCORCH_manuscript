@@ -1,8 +1,20 @@
 # stacked violin for all markers 
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
 
 library(Seurat)
+## REVISION: packages used but never loaded in the published script (they were
+##   loaded earlier in the interactive session); under Rscript this is an error.
+library(ggplot2)
+## REVISION: also used but never loaded.
+library(cowplot)
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+
+## REVISION: working directory is set under OUT_ROOT instead of a hard-coded server path.
+rerun_setup("01-Regional_data_processing",
+            subdirs = c("INS/data/03-cell_integration_vis", "INS/figures/marker_and_abundance"))
 seurat.ins <- readRDS("./INS/data/03-cell_integration_vis/integrated_seurat_obj_v3.RDS")
 
 cp_col1 <- c(
@@ -21,7 +33,7 @@ names(cp_col1) <- cell_types_consensus_levels
 
 # load markers
 
-marker.list <- readRDS("../reference/fine_grain_markers_INS_PFC.rds")
+marker.list <- readRDS(file.path(REFERENCE_DIR, "fine_grain_markers_INS_PFC.rds"))
 
 # add macrophage markers along with the t markers
 marker.list[["t"]] <- c(c("COLEC12","F13A1"),marker.list[["t"]])

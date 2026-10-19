@@ -1,3 +1,6 @@
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
+
 ---
 title: "SCORCH_astrocyte_analysis"
 output: html_document
@@ -14,12 +17,25 @@ library(clusterProfiler)
 library(org.Hs.eg.db)
 library(ggplot2)
 library(enrichplot)
+## REVISION: patchwork and tidyr are used below but were not loaded.
+library(patchwork)
+library(tidyr)
+
+## REVISION: revision/config/paths.R provides OUT_ROOT and the write guards
+##   (png()/saveRDS() create missing output directories); the revision/tools
+##   helpers provide the donor-level analyses and figure functions used below.
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))
+
+for (f in c("astro_cluster_features", "astro_figure_inputs", "astro_composition_donor",
+            "astro_subtype_de_donor", "astro_reviewer_figures"))
+  source(file.path(file.path(SCORCH_REPO, "revision/tools"), paste0(f, ".R")))
+
 ```
 
 #Read in overall seurat object
 This object is the one with all celltypes and regions integrated in one object.
 ```{r}
-scorch_combined <- readRDS("/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/combined/data/seurat_combined_v2.RDS")
+scorch_combined <- readRDS(file.path(OUT_ROOT, "01-Regional_data_processing/combined/data/seurat_combined_v2.RDS"))
 ```
 
 #Subset the Astrocytes
@@ -30,6 +46,10 @@ scorch_astrocytes <- subset(scorch_combined, idents = "Astro")
 
 #Process at a sample level
 ```{r}
+## REVISION: seurat_combined_v2.RDS has the RNA assay split (183 layers), and
+##   Seurat v5 errors with "Please join before splitting". Same fix as
+##   combined/03. JoinLayers() is a no-op on a joined assay.
+scorch_astrocytes <- JoinLayers(scorch_astrocytes)
 scorch_astrocytes[["RNA"]] <- split(scorch_astrocytes[["RNA"]], f = scorch_astrocytes$sample_name)
 scorch_astrocytes
 
@@ -50,15 +70,40 @@ scorch_astrocytes <- IntegrateLayers(
 
 #Visualize using tSNE
 ```{r}
-scorch_astro <- FindNeighbors(scorch_astro, reduction = "harmony_astro", dims = 1:30)
-scorch_astro <- FindClusters(scorch_astro, resolution = 1, cluster.name = "harmony_astro_clusters")
+scorch_astrocytes <- FindNeighbors(scorch_astrocytes, reduction = "harmony_astro", dims = 1:30)
+scorch_astrocytes <- FindClusters(scorch_astrocytes, resolution = 1, cluster.name = "harmony_astro_clusters")
 ```
 
 ```{r}
 scorch_astrocytes <-  RunTSNE(
   scorch_astrocytes,reduction = "harmony_astro", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:30, perplexity = 200,
-  fast_tsne_path="/banach2/jyc/softwares/FIt-SNE/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=14
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=14
 )
+```
+
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+res <- astro_features(scorch_astrocytes)
+
+res$dotplot          # marker dotplot
+res$suggested        # data-derived labels
+head(res$markers)    # full FindAllMarkers table
+```
+```{r}
+res$dotplot
+```
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+
+# everything at once
+astro_save_plots(scorch_astrocytes)
+
+# or individually
+astro_dotplot(scorch_astrocytes)                      # panel-annotated dotplot
+astro_tsne(scorch_astrocytes)                         # labelled tSNE
+astro_tsne(scorch_astrocytes, split_by = "condition_new")   # HIV vs CTR side by side
 ```
 
 
@@ -72,55 +117,160 @@ astro_cluster_ids <- c("0" = "Homeostatic",
                        "3" = "Reactive",
                        "4" = "Reactive",
                        "5" = "Reactive", 
-                       "6" = "Reactive", 
-                       "7" = "HIV-Reactive", 
-                       "8" = "Signaling", 
+                       "6" = "Reactive-PWH", 
+                       "7" = "Signaling", 
+                       "8" = "Micro-Astro", 
                        "9" = "Oligo", 
                        "10" = "Synaptic", 
-                       "11" = "Synaptic", 
-                       "12" = "Homeostatic", 
-                       "13" = "HIV-Reactive", 
-                       "14" = "HIV-Reactive",
-                       "15" = "Ciliated",
-                       "16" = "Hypoxic", 
-                       "17" = "Micro-Astro")
+                       "11" = "Signaling", 
+                       "12" = "Reactive-PWH", 
+                       "13" = "Synaptic", 
+                       "14" = "Reactive-PWH",
+                       "15" = "Synaptic",
+                       "16" = "Endo-Astro", 
+                       "17" = "Mural-Astro",
+                       "18" = "Micro-Astro", 
+                       "19" = "Reactive-PWH", 
+                       "20" = "Homeostatic"
+                       )
 ```
 
 ```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+astro_save_plots(scorch_astrocytes, group = "harmony_astro_clusters")
+```
+
+```{r}
+astro_vascular_check(scorch_astrocytes, clusters = c("8","18"))$nCount_vs_median
+```
+
+```{r}
+round(t(cluster_gene_pct(scorch_astrocytes,
+        c("P2RY12","CX3CR1","TMEM119","CSF1R","C1QB","DOCK8","AIF1"),
+        group = "harmony_astro_clusters")), 3)
+```
+
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+astro_vascular_check(scorch_astrocytes, clusters = c("16", "17"))
+```
+```{r}
+astro_vascular_check(scorch_astrocytes)   # all clusters
+```
+
+
+```{r}
+Idents(scorch_astrocytes) <- "harmony_astro_clusters"
 scorch_astrocytes <- RenameIdents(scorch_astrocytes, astro_cluster_ids)
 scorch_astrocytes[["subcluster_labels"]] <- Idents(scorch_astrocytes)
+```
+
+```{r}
+table(scorch_astrocytes$subcluster_labels)
+
+astro_tsne(scorch_astrocytes, label_col = "subcluster_labels")
+```
+
+```{r}
+dir.create(file.path(OUT_ROOT, "06-astrocyte_analysis/data"), recursive = TRUE, showWarnings = FALSE)
+
+saveRDS(scorch_astrocytes,
+        file.path(OUT_ROOT, "06-astrocyte_analysis/data/astro_all_clusters_labeled.RDS"))
+```
+
+```{r}
+# the cluster -> label mapping used
+write.csv(data.frame(cluster = names(astro_cluster_ids), label = unname(astro_cluster_ids)),
+          file.path(OUT_ROOT, "06-astrocyte_analysis/data/astro_cluster_label_map.csv"),
+          row.names = FALSE)
+
+# per-cell metadata: cluster, label, donor, condition, region
+write.csv(scorch_astrocytes@meta.data[, intersect(
+            c("harmony_astro_clusters","subcluster_labels","sample_ids",
+              "sample_name","condition_new","region","nCount_RNA","nFeature_RNA"),
+            colnames(scorch_astrocytes@meta.data))],
+          file.path(OUT_ROOT, "06-astrocyte_analysis/data/astro_cell_metadata.csv"))
 ```
 
 
 #Remove the oligo cluster
 There was a cluster of cells that expressed both oligodendrocyte markers and astrocyte markers that I removed because it was large and other papers had removed similar clusters in their analysis.  
 ```{r}
-clean_scorch_astro <- subset(scorch_astrocytes, idents = c("Homeostatic", "Reactive", "HIV-Reactive", "Signaling", "Synaptic", "Ciliated", "Hypoxic", "Micro-Astro"))
+clean_scorch_astro <- subset(scorch_astrocytes, idents = c("Homeostatic", "Reactive", "Reactive-PWH", "Signaling", "Synaptic", "Micro-Astro", "Mural-Astro"))
 ```
 
+
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_subtype_de_donor.R"))
+res <- astro_subtype_de(clean_scorch_astro, subtype = "Reactive-PWH")
+
+res$donors    # who contributes a matched pair, and how many cells
+res$de        # markers, donor-level statistics
+res$heatmap   # per-donor expression of the top markers
+```
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_reviewer_figures.R"))
+source(file.path(SCORCH_REPO, "revision/tools/astro_composition_donor.R"))
+res_comp <- astro_composition(clean_scorch_astro, label_col = "subcluster_labels")
+
+astro_fig_donor_contribution(clean_scorch_astro)                    # per-donor contribution to each subtype
+astro_composition(clean_scorch_astro)                               # donor-level subtype composition
+astro_fig_qc_metrics(clean_scorch_astro)                            # QC metrics per subtype
+#astro_fig_resolution_stability(clean_scorch_astro, "Reactive-PWH")  # clustering-resolution stability; slow, re-clusters
+```
+
+
+
+# Figure inputs
+REVISION: the chunks below use objects that the published notebook never creates
+(de_edgeR, genes, scorch_meta, heatmap_list, deg_results).
+`astro_figure_inputs()` loads them from the outputs under OUT_ROOT.
+```{r}
+inp <- astro_figure_inputs(source_de = "cross_region", counts = "uncorrected")
+
+de_edgeR     <- inp$de_edgeR      # donor-level pseudobulk edgeR, all cell types
+genes        <- inp$genes         # enrichGO universe = the genes actually tested
+scorch_meta  <- inp$scorch_meta   # combined@meta.data, ALL cell types (for S12a)
+heatmap_list <- inp$heatmap_list  # empty list the S15 loop fills
+deg_results  <- inp$deg_results   # per-cell-type DE, Seurat column names but
+                                  # DONOR-LEVEL statistics underneath (see
+                                  # deg_results_from_de in astro_figure_inputs.R)
+
+## source_de = "cross_region" because the astrocyte object spans INS/PFC/VST.
+## Pass "INS" / "PFC" / "VST" instead for a region-specific panel, and say which
+## in the legend either way - "astrocyte DE" means different things across them.
+##
+## deg_results keeps FindMarkers' column names so the S15 loops run unchanged,
+## but the numbers come from the donor-level pseudobulk DE rather than a
+## cell-level Wilcoxon. The logFC scale differs between the two, so the loops'
+## avg_log2FC cutoffs are not equivalent to the published cell-level cutoffs.
+```
 
 # Figures
 ## Figure 1
 ### B
 ```{r}
 #load in the edgeR results
-top_edgeR_ctr_all <- de_edgeR  %>%
+top_edgeR_pwoh_all <- de_edgeR  %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb) %>%
   dplyr::filter((logFC < -0.25)&(p_adj.glb < 0.05))
 
-top_edgeR_ctr_all$method <- "edgeR"
+top_edgeR_pwoh_all$method <- "edgeR"
 
-cell_types <- unique(top_edgeR_ctr_all$cluster_id)
-top_edgeR_ctr_list <- lapply(cell_types,function(cp) top_edgeR_ctr_all[top_edgeR_ctr_all$cluster_id == cp,])
-names(top_edgeR_ctr_list) <- cell_types
+cell_types <- unique(top_edgeR_pwoh_all$cluster_id)
+top_edgeR_pwoh_list <- lapply(cell_types,function(cp) top_edgeR_pwoh_all[top_edgeR_pwoh_all$cluster_id == cp,])
+names(top_edgeR_pwoh_list) <- cell_types
 
 cp <- "Astro"
-top_edgeR_ctr <- top_edgeR_ctr_list[[cp]]
+top_edgeR_pwoh <- top_edgeR_pwoh_list[[cp]]
 
 # go analysis
-#de <- AnnotationDbi::select(Homo.sapiens, keys = unique(top_edgeR_ctr$gene), keytype = "SYMBOL", columns="ENTREZID")
-#degs_converted_top_up <- top_edgeR_ctr %>%
+#de <- AnnotationDbi::select(Homo.sapiens, keys = unique(top_edgeR_pwoh$gene), keytype = "SYMBOL", columns="ENTREZID")
+#degs_converted_top_up <- top_edgeR_pwoh %>%
 #  mutate(SYMBOL=gene) %>%
 #  left_join(de,by="SYMBOL") %>%
 #  dplyr::filter(!is.na(ENTREZID))
@@ -129,7 +279,7 @@ top_edgeR_ctr <- top_edgeR_ctr_list[[cp]]
 #gene_list <- degs_converted_top_up$logFC
 #names(gene_list) <- degs_converted_top_up$ENTREZID
 
-ego_ctr <- enrichGO(gene          = top_edgeR_ctr$gene,
+ego_pwoh <- enrichGO(gene          = top_edgeR_pwoh$gene,
                 keyType       = "SYMBOL",
                 OrgDb         = org.Hs.eg.db,
                 universe      = genes,
@@ -138,15 +288,15 @@ ego_ctr <- enrichGO(gene          = top_edgeR_ctr$gene,
                 pvalueCutoff  = 0.05,
                 qvalueCutoff  = 0.05,
                 readable      = TRUE)
-ego_ctr_df <- ego_ctr@result
+ego_pwoh_df <- ego_pwoh@result
 # compute -log10(p.adjust) and keep only the top 10
-ego_ctr_df <- ego_ctr_df %>%
+ego_pwoh_df <- ego_pwoh_df %>%
   mutate(logP = -log10(p.adjust)) %>%
   arrange(desc(logP)) %>%
   slice_head(n = 10)  # plot top 10 terms
 
 
-ggplot(ego_ctr_df, aes(x = logP, y = reorder(Description, logP))) +
+p_fig1b_pwoh <- ggplot(ego_pwoh_df, aes(x = logP, y = reorder(Description, logP))) +
   geom_bar(stat = "identity", fill = "#CCE5FF", width = 0.7) +
   geom_text(aes(x = 0.5, label = Description), 
             hjust = 0, 
@@ -173,21 +323,26 @@ ggplot(ego_ctr_df, aes(x = logP, y = reorder(Description, logP))) +
 
 
 #PWH
-top_edgeR_hiv_all <- de_edgeR  %>%
+## REVISION: sign corrected. The published filter `logFC < 0.25` selects
+##   everything below +0.25, including every gene the PWoH panel selects (on the
+##   revised data, 730 of 798 "PWH" genes were PWoH genes), so the two GO panels
+##   were near-identical by construction. Genes up in PWH are logFC > 0.25
+##   (1,613 genes, no overlap with the PWoH set).
+top_edgeR_pwh_all <- de_edgeR  %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb) %>%
-  dplyr::filter((logFC < 0.25)&(p_adj.glb < 0.05))
+  dplyr::filter((logFC > 0.25)&(p_adj.glb < 0.05))
 
-top_edgeR_hiv_all$method <- "edgeR"
+top_edgeR_pwh_all$method <- "edgeR"
 
-cell_types <- unique(top_edgeR_hiv_all$cluster_id)
-top_edgeR_hiv_list <- lapply(cell_types,function(cp) top_edgeR_hiv_all[top_edgeR_hiv_all$cluster_id == cp,])
-names(top_edgeR_hiv_list) <- cell_types
+cell_types <- unique(top_edgeR_pwh_all$cluster_id)
+top_edgeR_pwh_list <- lapply(cell_types,function(cp) top_edgeR_pwh_all[top_edgeR_pwh_all$cluster_id == cp,])
+names(top_edgeR_pwh_list) <- cell_types
 
 cp <- "Astro"
-top_edgeR_hiv <- top_edgeR_hiv_list[[cp]]
+top_edgeR_pwh <- top_edgeR_pwh_list[[cp]]
 
-ego_hiv <- enrichGO(gene          = top_edgeR_hiv$gene,
+ego_pwh <- enrichGO(gene          = top_edgeR_pwh$gene,
                 keyType       = "SYMBOL",
                 OrgDb         = org.Hs.eg.db,
                 universe      = genes,
@@ -196,16 +351,19 @@ ego_hiv <- enrichGO(gene          = top_edgeR_hiv$gene,
                 pvalueCutoff  = 0.05,
                 qvalueCutoff  = 0.05,
                 readable      = TRUE)
-ego_hiv_df <- ego_hiv@result
+ego_pwh_df <- ego_pwh@result
 
 # Compute -log10(p.adjust) and keep only the top 10
-ego_hiv <- ego_hiv %>%
+## REVISION: the published code piped the enrichResult object (ego_hiv) rather
+##   than the data frame extracted on the line above, which fails with "no
+##   applicable method for 'slice_head'". Now matches the PWoH branch.
+ego_pwh_df <- ego_pwh_df %>%
   mutate(logP = -log10(p.adjust)) %>%
   arrange(desc(logP)) %>%
   slice_head(n = 10)  # Select top 10 terms
 
 # Plot
-ggplot(ego_hiv, aes(x = logP, y = reorder(Description, logP))) +
+p_fig1b_pwh <- ggplot(ego_pwh_df, aes(x = logP, y = reorder(Description, logP))) +
   geom_bar(stat = "identity", fill = "#FFEDD5", width = 0.7) +
   geom_text(aes(x = 0.1, label = Description), 
             hjust = 0, 
@@ -229,6 +387,16 @@ ggplot(ego_hiv, aes(x = logP, y = reorder(Description, logP))) +
     axis.ticks.y = element_blank(), 
     plot.margin = margin(t = 20, r = 20, b = 20, l = 20)  
   )
+p_fig1b_pwoh
+save_fig(p_fig1b_pwoh, "Fig1B_GO_PWoH_astrocytes", width = 10, height = 7)
+p_fig1b_pwh
+save_fig(p_fig1b_pwh, "Fig1B_GO_PWH_astrocytes", width = 10, height = 7)
+```
+
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+astro_palette_preview(clean_scorch_astro, "GFAP")
 ```
 
 
@@ -248,18 +416,34 @@ dim_plot <- DimPlot(
 
 
 #FeaturePlots for marker  genes
+## REVISION: reduction set explicitly. Without it Seurat uses its default order
+##   (umap, then tsne, then pca) and draws on `umap`, which this object inherits
+##   from seurat_combined_v2: an embedding of all 641,923 cells of every type,
+##   not of the astrocytes. The astrocyte-specific embedding is `tsne`, computed
+##   in this notebook from harmony_astro (`harmony` is the combined one).
 feature_plots <- FeaturePlot(
   object = clean_scorch_astro,
   features = c("GFAP", "CD44", "AQP4", "OSMR", "SERPINA3", "CHI3L1", "SYT1", "GRIA1"),
+  reduction = "tsne",
+  ## draw expressing cells on top of the zeros; with ~73k sparse nuclei the
+  ## positive cells are otherwise buried under the grey ones
+  order = TRUE,
   combine = FALSE
 )
 
+## Palette in one place: "grey_red", "viridis_hi", "heat", "blues" or "magma_hi".
+## See FEATURE_PALETTES in revision/tools/astro_cluster_features.R; all keep
+## the low end near-white because most nuclei are zero for any given gene, and a
+## dark floor makes the zeros look like signal.
+FEATURE_PAL <- "grey_red"
+
 feature_plots <- lapply(feature_plots, function(p) {
-  p + 
-    theme_void() + 
+  p +
+    feature_scale(FEATURE_PAL) +
+    theme_void() +
     theme(
       legend.position = "none",
-      plot.title = element_text(hjust = 0.5, face = "bold", size = 10)
+      plot.title = element_text(hjust = 0.5, face = "bold", size = 12)
     )
 })
 
@@ -272,16 +456,40 @@ feature_grid_top <- wrap_plots(feature_plots_top, ncol = 2)
 
 # 1x4 bottom row
 feature_grid_bottom <- wrap_plots(feature_plots_bottom, ncol = 4)
+
+## the assembled grids, and the combined panel
+feature_grid <- feature_grid_top / feature_grid_bottom
+
+save_fig(dim_plot,            "Fig1D_astro_subtype_tsne",   width = 10, height = 8)
+save_fig(feature_grid_top,    "Fig1D_feature_grid_top",     width = 8,  height = 8)
+save_fig(feature_grid_bottom, "Fig1D_feature_grid_bottom",  width = 14, height = 4)
+save_fig(feature_grid,        "Fig1D_feature_grid",         width = 14, height = 12)
 ```
 
 ###E
 ```{r}
-#find the markers for HIV-reactive cells
-hiv_reactive_markers <- FindMarkers(clean_scorch_astro, ident.1 = "HIV-Reactive", min.pct = 0.05)
-geneList <- hiv_reactive_markers$avg_log2FC
-names(geneList) <- rownames(hiv_reactive_markers)
+## REVISION: the published code used a cell-level Wilcoxon
+##   hiv_reactive_markers <- FindMarkers(clean_scorch_astro, ident.1 = "HIV-Reactive", min.pct = 0.05)
+##   which a reviewer noted has inflated type I error. astro_subtype_de()
+##   pseudobulks each donor twice (their cells of the subtype, and their
+##   remaining astrocytes) and tests within donor, so the replicates are donors
+##   rather than nuclei. The subtype label "HIV-Reactive" is now "Reactive-PWH".
+source(file.path(SCORCH_REPO, "revision/tools/astro_subtype_de_donor.R"))
+sde <- astro_subtype_de(clean_scorch_astro, subtype = "Reactive-PWH")
 
-gene <- names(geneList)[abs(geneList) > 1.5]
+geneList <- setNames(sde$de$logFC, sde$de$gene)
+
+## REVISION: select the genes that mark the population (up only).
+##   The published cell-level version used abs(logFC) > 1.5. Applied to the
+##   pseudobulk DE that gives 478 genes, of which only 92 are up and 386 down, so
+##   the enrichment would describe what Reactive-PWH lacks rather than what
+##   defines it. The 1.5 cut was also tuned for Seurat's cell-level avg_log2FC;
+##   pseudobulk logFC is a different quantity. At FDR < 0.05 the up-gene counts
+##   are logFC > 0.5 -> 900, > 1.0 -> 307, > 1.5 -> 92.
+FIG1E_LFC <- 0.5      # up genes at FDR < 0.05; 0.5 -> 900, 1.0 -> 307
+gene <- sde$de$gene[sde$de$FDR < 0.05 & sde$de$logFC > FIG1E_LFC]
+message("[Fig1E] up-regulated marker genes into enrichGO: ", length(gene),
+        "  (FDR < 0.05, logFC > ", FIG1E_LFC, ")")
 
 #use enrichGO
 hiv_reactive_pathway_test <- enrichGO(gene = gene,
@@ -293,29 +501,73 @@ hiv_reactive_pathway_test <- enrichGO(gene = gene,
                     qvalueCutoff  = 0.05,
                     readable      = TRUE)
 
-hm <- heatplot(hiv_reactive_pathway_test, foldChange = geneList, showCategory = 10) +
+## REVISION: family = "Arial" replaced by "sans". Arial is not a registered PDF
+##   font in the container, so the PDF device raises "invalid font type"; "sans"
+##   maps to Helvetica, which is metrically equivalent to Arial.
+## Enrichment is computed on all 900 up genes above; only the display is
+## thinned, so the p-values and the terms selected are unaffected.
+## N_SHOW of 40-80 keeps the gene axis legible.
+N_TERMS <- 10         ## hard cap on pathways shown
+N_SHOW  <- 40         ## genes drawn; fewer = larger tiles
+
+## Pick the display genes from the terms being shown, ranked by significance.
+## Globally-top genes would leave many of them in no displayed pathway and the
+## heatmap sparse.
+show_genes <- genes_in_top_terms(hiv_reactive_pathway_test, n_terms = N_TERMS,
+                                 de = sde$de, n_genes = N_SHOW)
+message("[Fig1E] ", N_TERMS, " pathways, ", length(show_genes), " genes drawn")
+
+hm <- heatplot(trim_enrich(hiv_reactive_pathway_test, show_genes, n_terms = N_TERMS),
+               foldChange = geneList, showCategory = N_TERMS) +
   scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
   theme_classic() + 
   theme(
     panel.grid.major = element_blank(),
     panel.grid.minor = element_blank(),
     panel.border = element_rect(color = "black", fill = NA, size = 1),  
-    axis.text.y = element_text(size = 16, color = "black", family = "Arial"),
-    axis.title.y = element_text(size = 16, face = "bold", color = "black", family = "Arial"),
-    axis.text.x = element_text(size = 16, color = "black", angle = 45, hjust = 1, family = "Arial"),
+    axis.text.y = element_text(size = 16, color = "black", family = "sans"),
+    axis.title.y = element_text(size = 16, face = "bold", color = "black", family = "sans"),
+    axis.text.x = element_text(size = 16, color = "black", angle = 45, hjust = 1, family = "sans"),
     text = element_text(color = "black"),
-    legend.text = element_text(size = 12, family = "Arial"),
-    legend.title = element_text(size = 14, face = "bold", family = "Arial"),
-    plot.title = element_text(size = 18, face = "bold", hjust = 0.5, family = "Arial")  
+    legend.text = element_text(size = 12, family = "sans"),
+    legend.title = element_text(size = 14, face = "bold", family = "sans"),
+    plot.title = element_text(size = 18, face = "bold", hjust = 0.5, family = "sans")  
   ) +
   RotatedAxis() +
-  ggtitle(expression(bold("GO Enrichment Heatmap for HIV-Reactive Astrocytes")))
+  ggtitle(expression(bold("GO Enrichment Heatmap for Reactive-PWH Astrocytes")))
+
+save_fig(hm, "Fig1E_GO_heatmap_Reactive_PWH", width = 16, height = 9)
 ```
+
+```{r}
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+
+ego <- enrichGO(gene = gene, universe = sde$de$gene, OrgDb = org.Hs.eg.db,
+                keyType = "SYMBOL", ont = "BP", pAdjustMethod = "BH",
+                pvalueCutoff = 0.05, qvalueCutoff = 0.05, readable = TRUE)
+
+astro_term_module_plot(ego, sde$de, n_terms = 8)
+
+```
+
+
+```{r}
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))
+source(file.path(SCORCH_REPO, "revision/tools/astro_cluster_features.R"))
+
+rp <- astro_reactome(gene, universe = sde$de$gene)
+
+dotplot(rp$enrich, showCategory = 10)
+astro_term_module_plot(rp$enrich, sde$de, n_terms = 10)
+heatplot(trim_enrich(rp$enrich, show_genes, n_terms = 12), foldChange = geneList)
+```
+
 
 #Supplementary Figures
 ##S12a
 ```{r}
 #scorch meta is the scorch_combined@meta.data
+comparisons <- list(c("PWoH", "PWH"))
 astro_plot_data <- scorch_meta %>%
   dplyr::mutate(
     region = dplyr::case_when(
@@ -359,6 +611,8 @@ astro_violin_plot <- ggplot(astro_plot_data, aes(x = condition_new, y = astro_pe
     legend.position = "none",
     panel.grid.major = element_line(color = "gray80", linetype = "dotted")
   )
+
+save_fig(astro_violin_plot, "S12a_astro_percentage_by_region", width = 11, height = 6)
 ```
 
 ##S12b
@@ -372,13 +626,10 @@ metadata <- metadata %>%
   group_by(subcluster_labels) %>%
   mutate(proportion = count / sum(count) * 100)
 
-ctr_samples <- unique(metadata$sample_ids[metadata$condition_new == "CTR"])
-hiv_samples <- unique(metadata$sample_ids[metadata$condition_new == "HIV"])
-
-ctr_colors <- colorRampPalette(c("lightblue", "blue"))(length(ctr_samples))
-hiv_colors <- colorRampPalette(c("pink", "red"))(length(hiv_samples))
-
-color_map <- c(setNames(ctr_colors, ctr_samples), setNames(hiv_colors, hiv_samples))
+## REVISION: replaces the published hand-built CTR-blue / HIV-pink-red ramps.
+##   The PWH ramp is orange to match PWH_COLOURS used in every other figure,
+##   and the donor ordering is deterministic.
+color_map <- donor_condition_palette(metadata$sample_ids, metadata$condition_new)
 
 plot <- ggplot(metadata, aes(x = subcluster_labels, y = proportion, fill = sample_ids)) +
   geom_bar(stat = "identity", position = "stack", color = "black") + 
@@ -400,6 +651,8 @@ plot <- ggplot(metadata, aes(x = subcluster_labels, y = proportion, fill = sampl
     fill = "Sample IDs",
     title = "Sample Proportions of Astrocyte Subtype"
   )
+
+save_fig(plot, "S12b_subtype_proportion_by_donor", width = 12, height = 7)
 ```
 
 
@@ -410,7 +663,9 @@ clean_scorch_astro$condition_updated <- ifelse(
   ifelse(clean_scorch_astro$condition_new == "HIV", "PWH",
   clean_scorch_astro$condition_new))
   
-DotPlot(clean_scorch_astro, features = c("IL1B", "IL6", "IL6R", "IL1R1", "C3"), split.by = "condition_updated")
+p_s13a <- DotPlot(clean_scorch_astro, features = c("IL1B", "IL6", "IL6R", "IL1R1", "C3"), split.by = "condition_updated")
+p_s13a
+save_fig(p_s13a, "S13a_inflammatory_dotplot", width = 11, height = 6)
 ```
 
 
@@ -464,6 +719,13 @@ hiv_pathway_plot <- dotplot(ego_vst_h, showCategory=12) + ggtitle("Top INS ATAC 
 
 ##S15
 ```{r}
+
+source(file.path(SCORCH_REPO, "revision/tools/astro_figure_inputs.R"))
+inp <- astro_figure_inputs(source_de = "cross_region", counts = "uncorrected")
+deg_results <- inp$deg_results
+length(deg_results)          # number of cell types
+head(deg_results[[1]])       # avg_log2FC, p_val_adj, pct.1, pct.2
+
 # downregulated genes for each celltype
 for (cell in names(deg_results)) {
     degs <- deg_results[[cell]]
@@ -537,6 +799,7 @@ for (cell in names(deg_results)) {
 }
 
 heatmap_list
+save_fig_list(heatmap_list, "S15_pathway_down", width = 11, height = 7)
 
 #save the output
 ```
@@ -544,12 +807,19 @@ heatmap_list
 
 #Upregulated DEGs
 ```{r}
+## REVISION: reset the accumulator. Both S15 loops write into heatmap_list;
+##   without the reset the second loop's set also carries the first loop's plots.
+heatmap_list <- list()
+
 for (cell in names(deg_results)) {
     degs <- deg_results[[cell]]
   degs$Gene <- rownames(degs)
   
   degs <- degs %>% 
-    filter(p_val_adj < 0.05, avg_log2FC < 0.5, pct.1 > 0.05)
+    ## REVISION: sign corrected. The published `avg_log2FC < 0.5` selects
+    ##   everything below +0.5, including every gene the downregulated loop
+    ##   above selects (as in Figure 1B's PWH panel). Up genes are avg_log2FC > 0.5.
+    filter(p_val_adj < 0.05, avg_log2FC > 0.5, pct.1 > 0.05)
   
   geneList <- degs$avg_log2FC
   names(geneList) <- degs$Gene
@@ -614,5 +884,7 @@ for (cell in names(deg_results)) {
     message(paste("Not enough significant genes for", cell, "- Skipping enrichment analysis."))
   }
 }
+
+save_fig_list(heatmap_list, "S15_pathway_up", width = 11, height = 7)
 ```
 

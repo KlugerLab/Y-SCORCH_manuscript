@@ -1,3 +1,6 @@
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
+
 library(dplyr)
 library(ggplot2)
 library(limma)
@@ -17,13 +20,30 @@ library(Homo.sapiens)
 library(RColorBrewer)
 library(circlize)
 library(grid)
+## REVISION: patchwork and tidyr are used below but were not loaded; required under Rscript.
+library(patchwork)
+library(tidyr)
 
 #BiocManager::install("GOSim")
-library(GOSim)
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/cross_region//"
-setwd(wd)
+## REVISION: GOSim is no longer in Bioconductor and no GOSim function is called
+## in this script, so the import is disabled.
+# library(GOSim)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+## REVISION: run against either DE result set.
+##   SCORCH_DE_COUNTS = "uncorrected" (default, the primary analysis) | "corrected"
+##   Inputs and outputs both carry the suffix, so the two never mix and the
+##   corrected figures cannot overwrite the primary ones.
+DE_COUNTS <- match.arg(Sys.getenv("SCORCH_DE_COUNTS", unset = "uncorrected"),
+                       c("uncorrected", "corrected"))
+OUT_SFX <- if (DE_COUNTS == "corrected") "_corrected" else ""
+## every png()/pdf()/ggsave() in this script picks this up via revision/config/paths.R
+options(scorch.out_suffix = paste0(OUT_SFX, XR_OUT_SFX))   ## REVISION: + "_donor_aware" when SCORCH_XR_DE=donor_aware
+message("[fig] DE result set: ", DE_COUNTS)
 
-de_edgeR <- readRDS("./data/all_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+## REVISION: working directory is set by rerun_setup() under OUT_ROOT instead of a hardcoded server path.
+rerun_setup("03-DE_analysis/cross_region/",
+            subdirs = c("data", "figures"))
+de_edgeR <- readRDS(xr_de_file(OUT_SFX))   ## REVISION: edgeR table by default; the donor-aware (primary) table under SCORCH_XR_DE=donor_aware
 
 top_edgeR_all.up <- de_edgeR  %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%

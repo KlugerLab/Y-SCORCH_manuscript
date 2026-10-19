@@ -1,0 +1,5 @@
+revision/config/local_paths.R
+revision/config/*.csv
+Rplots.pdf
+__pycache__/
+logs/

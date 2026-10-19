@@ -1,4 +1,7 @@
 # compare the DEs between regions
+#
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
 
 library(dplyr)
 library(ggplot2)
@@ -30,21 +33,34 @@ library(cowplot)
 library(ggrepel)
 
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+## REVISION: run against either DE result set.
+##   SCORCH_DE_COUNTS = "uncorrected" (default, the primary analysis) | "corrected"
+##   Inputs and outputs both carry the suffix, so the two never mix and the
+##   corrected figures cannot overwrite the primary ones.
+DE_COUNTS <- match.arg(Sys.getenv("SCORCH_DE_COUNTS", unset = "uncorrected"),
+                       c("uncorrected", "corrected"))
+OUT_SFX <- if (DE_COUNTS == "corrected") "_corrected" else ""
+## every png()/pdf()/ggsave() in this script picks this up via revision/config/paths.R
+options(scorch.out_suffix = OUT_SFX)
+message("[fig] DE result set: ", DE_COUNTS)
 
-INS_edgeR <- readRDS("./INS/results/INS_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+## REVISION: working directory is set by rerun_setup() under OUT_ROOT instead of a hardcoded server path.
+rerun_setup("03-DE_analysis",
+            subdirs = c("INS/results", "PFC//results", "VST//results", "figures", "regional/figures"))
+INS_edgeR <- readRDS(paste0("./INS/results/INS_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 INS_all <- INS_edgeR %>%
   ungroup() %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb,region) 
 
-PFC_edgeR <- readRDS("./PFC//results/PFC_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+PFC_edgeR <- readRDS(paste0("./PFC//results/PFC_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 PFC_all <- PFC_edgeR %>%
   ungroup() %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb,region) 
 
-VST_edgeR <- readRDS("./VST//results/VST_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+VST_edgeR <- readRDS(paste0("./VST//results/VST_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 
 VST_all <- VST_edgeR %>%
   ungroup() %>%
@@ -134,7 +150,10 @@ corr_mat_df <- as.data.frame(corr_mat_df)
 corr_mat_df$regions <- c("INS-PFC","INS-VST","PFC-VST")
 corr_mat_df.long <- corr_mat_df %>%
   pivot_longer(!regions, names_to = "cell_type", values_to = "correlation")
-cp_orders <- c("Astro","Micro","Oligo","OPC","Endo","Pvalb","Sst","Vip","Other immune","VLMC",
+## REVISION: "Macrophages" added to this fixed order; without it factor() turns
+##   it into an unlabelled NA row. The published run had no macrophage rows in
+##   any region pair; the revised data test them in all three.
+cp_orders <- c("Astro","Micro","Oligo","OPC","Endo","Pvalb","Sst","Vip","Other immune","Macrophages","VLMC",
                "L2/3 IT","L4 IT","L5 IT","L5/6 NP","Lamp5","Lamp5 Lhx6",
                "Chandelier"
 )

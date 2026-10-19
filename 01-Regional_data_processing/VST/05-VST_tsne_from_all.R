@@ -1,12 +1,69 @@
 # get the tsne from the new combined object
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
 
 library(Seurat)
+## REVISION: packages used but never loaded in the published script (they were
+##   loaded earlier in the interactive session); under Rscript this is an error.
+library(ggplot2)
+library(patchwork)
+## REVISION: also used but never loaded.
+library(cowplot)
+library(dplyr)
+library(ggpubr)
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-seurat.combined <- readRDS("./combined/data/seurat_combined_v3.RDS")
+## REVISION: working directory is set under OUT_ROOT instead of a hard-coded server path.
+rerun_setup("01-Regional_data_processing",
+            subdirs = c("VST/data/04-VST-tsne_marker_plotting", "VST/figures/marker_and_abundance", "VST/figures/tsne_new", "combined/data"))
+## REVISION: prefer the combined object with donor 1040's VST cells removed.
+##   1040's VST library is excluded under the post-ambient-correction rule
+##   (38.1% excitatory, the smallest VST library); see VST_SAMPLE_KEEP_OVERRIDE
+##   in revision/config/paths.R.
+##
+##   Resolution order: SCORCH_COMBINED_OBJ env override, then the filtered
+##   object, then the unfiltered one. The unfiltered fallback lets the script
+##   run on a fresh checkout, but it raises a warning, since a silent fallback
+##   to the object containing 1040 is the failure this guards against.
+## Order matters. The _msn object is the only one carrying the nine MSN
+## subtypes (revision/tools/patch_msn_subtypes.R); without it every striatal
+## neuron is a single "MSNs" class, cp_col1 below has no entry for it, and the
+## fine-grained tSNE renders the largest VST population unmapped.
+.combined_candidates <- c(
+  Sys.getenv("SCORCH_COMBINED_OBJ", unset = NA_character_),
+  "./combined/data/seurat_combined_v3_no1040_msn.RDS",
+  "./combined/data/seurat_combined_v3_no1040.RDS",
+  "./combined/data/seurat_combined_v3.RDS"
+)
+.combined_in <- .combined_candidates[!is.na(.combined_candidates) &
+                                     file.exists(.combined_candidates)][1]
+if (is.na(.combined_in)) stop("no combined object found; tried: ",
+                              paste(na.omit(.combined_candidates), collapse = ", "))
+if (!grepl("no1040", .combined_in))
+  warning("[VST] using ", .combined_in, " - this object still contains donor ",
+          "1040's VST cells. Run revision/tools/combined_drop_1040.R first unless that ",
+          "is deliberate.", immediate. = TRUE)
+message("[VST] combined object: ", .combined_in)
+seurat.combined <- readRDS(.combined_in)
 
 seurat.vst <- subset(seurat.combined,cells = colnames(seurat.combined)[seurat.combined@meta.data$region == "VST"])
+message("[VST] VST cells: ", ncol(seurat.vst), " from ",
+        length(unique(as.character(seurat.vst@meta.data$sample_ids))), " samples")
+
+## Report whether the subtypes are present. cp_col1 is keyed to the nine of
+## them; a collapsed "MSNs" class silently drops out of the palette instead of
+## erroring, so the figure looks finished and is not.
+.ann <- as.character(seurat.vst@meta.data$consensus_annotation_v3)
+.n_msn_sub <- length(unique(.ann[grepl("^D1|^D2", .ann)]))
+message("[VST] MSN subtypes present: ", .n_msn_sub, " of 9",
+        if (any(.ann == "MSNs")) paste0("  (", sum(.ann == "MSNs"),
+                                        " cells still labelled 'MSNs')") else "")
+if (.n_msn_sub == 0)
+  warning("[VST] no MSN subtypes on this object - the fine-grained tSNE will ",
+          "render every striatal neuron unmapped. Expected ",
+          "seurat_combined_v3_no1040_msn.RDS.", immediate. = TRUE)
 
 seurat.vst <- NormalizeData(seurat.vst)
 seurat.vst <- FindVariableFeatures(seurat.vst)
@@ -20,8 +77,23 @@ seurat.vst <- IntegrateLayers(
 
 seurat.vst <-  RunTSNE(
   seurat.vst,reduction = "harmony", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:50, perplexity = 200,
-  fast_tsne_path="/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=36#,initialization=seurat.combined@reductions$pca@cell.embeddings[colnames(seurat.vst),]
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=36#,initialization=seurat.combined@reductions$pca@cell.embeddings[colnames(seurat.vst),]
 )
+
+## REVISION (reviewer request): UMAP alongside the tSNE above.
+##   Same harmony reduction and dims, so the two embeddings are directly
+##   comparable. Stored on the object before it is saved. Not part of the
+##   published analysis.
+##
+##   Threads: Seurat passes n_threads = future::nbrOfWorkers() to uwot, so a
+##   direct n_threads argument to RunUMAP is silently dropped. run_umap_threaded()
+##   sets the future plan for the call and restores it afterwards.
+seurat.vst <- run_umap_threaded(seurat.vst, reduction = "harmony", dims = 1:50)
+
+## REVISION: write named tSNE and UMAP panels. The published scripts call
+##   DimPlot() with no device open, so under Rscript every plot lands unlabelled
+##   in Rplots.pdf and the embedding figures cannot be found.
+save_embedding_panels(seurat.vst, prefix = "05_VST_tsne_from_all")
 
 # cell types (fine grained)
 cp_col1 <- c(

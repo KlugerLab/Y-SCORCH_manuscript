@@ -1,10 +1,31 @@
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
+
+## REVISION: packages used in the script but not loaded in the published version.
+##   They must be loaded here at the top: the script's last library() call sits
+##   mid-file, after %>% is first used.
+library(ggplot2)
+library(patchwork)
+library(Seurat)
+library(dplyr)
 library(DESeq2)
 library(muscat)
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/"
-setwd(wd)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+## REVISION: run against either DE result set.
+##   SCORCH_DE_COUNTS = "uncorrected" (default, the primary analysis) | "corrected"
+##   Inputs and outputs both carry the suffix, so the two never mix and the
+##   corrected figures cannot overwrite the primary ones.
+DE_COUNTS <- match.arg(Sys.getenv("SCORCH_DE_COUNTS", unset = "uncorrected"),
+                       c("uncorrected", "corrected"))
+OUT_SFX <- if (DE_COUNTS == "corrected") "_corrected" else ""
+## every png()/pdf()/ggsave() in this script picks this up via revision/config/paths.R
+options(scorch.out_suffix = OUT_SFX)
+message("[fig] DE result set: ", DE_COUNTS)
 
-
-META_PATH = "/banach2/SCORCH/data/metadata/sample_metadata_v3.csv"
+## REVISION: working directory is set by rerun_setup() under OUT_ROOT instead of a hardcoded server path.
+rerun_setup("03-DE_analysis",
+            subdirs = c("cross_region/data", "plotting/figures"))
+META_PATH = SAMPLE_META   ## REVISION: rebuilt sample sheet
 sample_meta <- read.csv(META_PATH)
 
 sample_source <- sample_meta %>%
@@ -14,8 +35,8 @@ rownames(sample_source) <- sample_source$sample_ids
 
 
 
-pb <- readRDS("./cross_region/data/pseudo_bulk.rds")
-mm <- readRDS("./cross_region/data/mm.rds")
+pb <- readRDS(paste0("./cross_region/data/pseudo_bulk", OUT_SFX, ".rds"))
+mm <- readRDS(paste0("./cross_region/data/mm", OUT_SFX, ".rds"))
 cell_types <- names(pb@assays@data)
 
 pb@colData$sample_source <- sample_source[pb@colData$sample_ids,]$subject_source_v2
@@ -65,7 +86,6 @@ for(cp in  c("Micro")){
   
 }
 
-library(patchwork)
 
 png(filename = paste0("./plotting/figures/micro_stacked_condition.png"),width=1500,height = 3000,res = 300)
 print(p_list_all[[1]][["PFC"]]+NoLegend()+
@@ -122,7 +142,6 @@ for(cp in  c("Micro")){
   
 }
 
-library(patchwork)
 
 png(filename = paste0("./plotting/figures/micro_stacked_sources.png"),width=1500,height = 3000,res = 300)
 print(p_list_all[[1]][["PFC"]]+NoLegend()+

@@ -1,10 +1,16 @@
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
+
 library(Seurat)
 library(dplyr)
 library(ggplot2)
 library(NICHES)
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-
+## REVISION: working directory is set under OUT_ROOT by rerun_setup() instead of a
+##   hard-coded setwd().
+rerun_setup("",
+            subdirs = c("01-Regional_data_processing/combined/data", "08-communication/NICHES/figures_new"))
 seurat.combined <- readRDS("./01-Regional_data_processing/combined/data/seurat_combined_v3_layer_joined.RDS")
 
 
@@ -28,9 +34,23 @@ for(sample_id in names(test_sample_obj_list)){
     Idents(test_sample_obj_list[[sample_id]]) <- "consensus_annotation_v3"
     niches_obj_list[[sample_id]] <- RunNICHES(test_sample_obj_list[[sample_id]],
                                               assay = "RNA",LR.database = "fantom5",min.cells.per.ident = 10,
-                                              species = "human",meta.data.to.map = c("astro_subtype","condition_new","region"),
+                                              ## REVISION: "astro_subtype" removed from meta.data.to.map.
+                                              ##   The column does not exist on the object, so RunNICHES()
+                                              ##   errors, and nothing downstream reads it.
+                                              species = "human",meta.data.to.map = c("condition_new","region"),
                                               cell_types ="consensus_annotation_v3",CellToCell = T )
     niches_obj_list[[sample_id]] <- niches_obj_list[[sample_id]][["CellToCell"]]
+
+    ## REVISION: carry donor identity onto the interaction vectors before the
+    ##   merge. RunNICHES() maps only the meta.data.to.map columns, none of which
+    ##   identify the donor, so donor-level statistics would otherwise be impossible.
+    .md <- test_sample_obj_list[[sample_id]]@meta.data
+    niches_obj_list[[sample_id]]@meta.data$sample_name <- sample_id
+    if ("sample_ids" %in% colnames(.md))
+      niches_obj_list[[sample_id]]@meta.data$sample_ids <- as.character(.md$sample_ids)[1]
+    else
+      warning("no sample_ids on ", sample_id, " - donor-level NICHES DE will ",
+              "have to fall back to sample_name, which splits a donor by region")
     if(length(unique(niches_obj_list[[sample_id]]@meta.data$VectorType)) > 1){
       
       if(ncol(niches_obj_list[[sample_id]]) > 200){
@@ -68,14 +88,27 @@ merge_niches_obj <- CreateSeuratObject(counts = count1,
 merge_niches_obj <- NormalizeData(merge_niches_obj)
 merge_niches_obj@assays$RNA@layers$data <- merge_niches_obj@assays$RNA@layers$counts
 
-merge_niches_obj@meta.data$condition <- as.character(merge_niches_obj@meta.data$condition_new.Receiving)
+## REVISION: person-first labels (PWH / PWoH instead of HIV / CTR). Everything
+##   downstream that keys on them (vec_condition, the FindMarkers idents, the
+##   DotPlot split) is updated together.
+merge_niches_obj@meta.data$condition <- as.character(pwh_relabel(merge_niches_obj@meta.data$condition_new.Receiving))
 merge_niches_obj@meta.data$vec_condition <- paste0(merge_niches_obj@meta.data$VectorType,'|',merge_niches_obj@meta.data$condition)
+
+## REVISION: save the merged object (the published script kept only the figures),
+##   so donor-level reanalysis is possible.
+dir.create("./08-communication/NICHES", recursive = TRUE, showWarnings = FALSE)
+saveRDS(merge_niches_obj, "./08-communication/NICHES/merge_niches_obj.RDS")
+message("[niches] wrote merge_niches_obj.RDS: ", ncol(merge_niches_obj),
+        " interaction vectors, ",
+        length(unique(merge_niches_obj@meta.data$VectorType)), " VectorTypes, ",
+        if ("sample_ids" %in% colnames(merge_niches_obj@meta.data))
+          paste0(length(unique(merge_niches_obj@meta.data$sample_ids)), " donors")
+        else "NO donor column")
 
 region_cols <- c("#E69F00", "#56B4E9","#CC79A7")
 names(region_cols) <-c("INS","PFC","VST")
 
-cond_col <- c("#0072B2", "darkorange1")
-names(cond_col) <- c("CTR","HIV")
+cond_col <- PWH_COLOURS   ## REVISION: person-first labels; PWoH = #0072B2, PWH = darkorange1
 
 
 Idents(merge_niches_obj) <- "vec_condition"
@@ -83,12 +116,18 @@ p_list_up <- list()
 p_list_down <- list()
 
 merge_niches_obj_sub_list <- list()
+## REVISION: keep the FindMarkers output for every VectorType. The published
+##   script used it only to pick 20 interactions per DotPlot and did not save the
+##   ranked ligand-receptor pairs.
+marker_list <- list()
 
 for(vec in unique(merge_niches_obj@meta.data$VectorType)){
-  
+
   markers <- FindMarkers(merge_niches_obj,
-                         ident.1 = paste0(vec,"|HIV"),ident.2 = paste0(vec,"|CTR")
+                         ident.1 = paste0(vec,"|PWH"),ident.2 = paste0(vec,"|PWoH")
   )
+  marker_list[[vec]] <- tibble::rownames_to_column(markers, "interaction")
+  marker_list[[vec]]$VectorType <- vec
   markers.up.sig <- markers %>%
     filter(p_val_adj < 0.01)%>%
     slice_max(avg_log2FC,n=20) 
@@ -96,7 +135,7 @@ for(vec in unique(merge_niches_obj@meta.data$VectorType)){
     filter(p_val_adj < 0.01)%>%
     slice_max(-avg_log2FC,n=20) 
   merge_niches_obj_sub <- subset(merge_niches_obj,
-                                 cells = colnames(merge_niches_obj)[Idents(merge_niches_obj) %in% c(paste0(vec,"|HIV"),paste0(vec,"|CTR"))])
+                                 cells = colnames(merge_niches_obj)[Idents(merge_niches_obj) %in% c(paste0(vec,"|PWH"),paste0(vec,"|PWoH"))])
   merge_niches_obj_sub <- ScaleData(merge_niches_obj_sub,features = rownames(merge_niches_obj_sub))
   
   
@@ -113,10 +152,26 @@ for(vec in unique(merge_niches_obj@meta.data$VectorType)){
   
 }
 
+## REVISION: write the ranked interactions (per VectorType RDS and one combined
+##   CSV) so the full result is available, not only the dot plots.
+saveRDS(marker_list, "./08-communication/NICHES/niches_markers_by_vectortype.RDS")
+all_markers <- do.call(rbind, marker_list)
+all_markers <- all_markers[order(all_markers$p_val_adj, -abs(all_markers$avg_log2FC)), ]
+write.csv(all_markers, "./08-communication/NICHES/niches_markers_all.csv", row.names = FALSE)
+message("[niches] wrote ", nrow(all_markers), " interaction tests across ",
+        length(marker_list), " VectorTypes; ",
+        sum(all_markers$p_val_adj < 0.01, na.rm = TRUE), " at p_adj < 0.01")
+
 for(vec in unique(merge_niches_obj@meta.data$VectorType)){
-  
+
   png(file=paste0("./08-communication/NICHES/figures_new/",make.names(vec),".png"),width = 2000,height = 2000,res=300)
   print(p_list_up[[vec]])
+  dev.off()
+
+  ## REVISION: the published script built p_list_down but never wrote it; it is
+  ##   now saved alongside the up panel.
+  png(file=paste0("./08-communication/NICHES/figures_new/",make.names(vec),"_down.png"),width = 2000,height = 2000,res=300)
+  print(p_list_down[[vec]])
   dev.off()
 }
 

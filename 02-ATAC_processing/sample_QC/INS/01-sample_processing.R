@@ -1,14 +1,23 @@
 # rerun sample processing filtering based on the newest RNA data
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
 
 
 library(Signac)
 library(Seurat)
 library(EnsDb.Hsapiens.v86)
 library(BSgenome.Hsapiens.UCSC.hg38)
+## REVISION: dplyr is used but was not loaded by the published script.
+library(dplyr)
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/02-ATAC_processing/sampleQC_redo")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-META_PATH = "/banach2/SCORCH/data/metadata/sample_metadata_v3.csv"
+## REVISION: working directory is set under OUT_ROOT by rerun_setup() instead of a
+##   hard-coded setwd().
+rerun_setup("02-ATAC_processing/sampleQC_redo",
+            subdirs = c("INS/data", "INS/figures/qc_metrics"))
+META_PATH = SAMPLE_META   ## REVISION: rebuilt sample sheet
 
 #test_sample_path <- "/banach2/SCORCH/data/raw/10xMultiome-PFC-CTR_HIV-6pairs-08102022/cellranger_arc/6801066772_HIV_PFC_MAH/"
 
@@ -25,9 +34,23 @@ sample_meta_filter = as.data.frame(sample_meta) %>%
 sample_meta_filter$cellranger_atac_path <- sapply(sample_meta_filter$cellranger_path,function(crpath) gsub("/filtered_feature_bc_matrix/", "/",crpath))
 
 # load the atac data for each sample
-count_list <- lapply(sample_meta_filter$cellranger_atac_path,function(crpath)  
-  Read10X_h5(paste0(crpath,"filtered_feature_bc_matrix.h5")))
+## REVISION: read the CellRanger MTX directory instead of the .h5 file. HDF5
+##   requests a file lock on every open, which hangs on the NFS data mount; the
+##   MTX and .h5 matrices are identical, so `$Peaks` is unchanged. Per-sample
+##   progress messages added.
+.n_samp <- nrow(sample_meta_filter)
+count_list <- lapply(seq_len(.n_samp), function(i) {
+  crpath <- sample_meta_filter$cellranger_atac_path[i]
+  sid    <- sample_meta_filter$sample_ids[i]
+  t0 <- Sys.time()
+  x  <- Read10X(paste0(crpath, "filtered_feature_bc_matrix/"))
+  message(sprintf("[atac] %2d/%2d  %-16s peaks %d x %d  (%.0fs)",
+                  i, .n_samp, sid, nrow(x$Peaks), ncol(x$Peaks),
+                  as.numeric(difftime(Sys.time(), t0, units = "secs"))))
+  x
+})
 names(count_list) <- sample_meta_filter$sample_ids
+message("[atac] loaded ", length(count_list), " samples")
 
 fragpath_list <- lapply(sample_meta_filter$cellranger_atac_path,function(crpath) paste0(crpath,"atac_fragments.tsv.gz"))
 names(fragpath_list) <- sample_meta_filter$sample_ids
@@ -145,11 +168,21 @@ signac.obj.list.merged <- lapply(sample_meta_filter$sample_ids, function(sid){
 })
 names(signac.obj.list.merged) <- names(signac.obj.list_sub)
 
+## REVISION: the published script hard-coded the merge range (c(2:31)). If QC or
+##   the RNA-barcode intersection drops a sample, merge() fails or silently drops
+##   samples; the range is now derived from the list length.
+.n_obj <- length(signac.obj.list.merged)
+message("[atac] merging ", .n_obj, " sample objects: ",
+        paste(names(signac.obj.list.merged), collapse = ", "))
+stopifnot(.n_obj >= 2, !any(duplicated(names(signac.obj.list.merged))))
+
 signac.obj.combined <- merge(
   x = signac.obj.list.merged[[1]],
-  y = signac.obj.list.merged[c(2:31)],
+  y = signac.obj.list.merged[2:.n_obj],
   add.cell.ids = names(signac.obj.list.merged)
 )
+message("[atac] merged: ", ncol(signac.obj.combined), " cells x ",
+        nrow(signac.obj.combined), " peaks")
 
 
 saveRDS(signac.obj.combined,"./INS/data/signac_combined.RDS")

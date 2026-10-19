@@ -1,18 +1,33 @@
 # compute how often the nearest neighbors are of the same cell type
 # in the atac data
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
 
 library(tidyr)
 library(dplyr)
 #BiocManager::install("Repitools")
-library(Repitools)
+## REVISION: Repitools import disabled. It cannot be installed (its dependency
+##   gsmoothr was archived from CRAN) and no Repitools function is called here.
+# library(Repitools)
 library(ggpubr)
 library(cowplot)
+## REVISION: Seurat is used but was not loaded by the published script.
+library(Seurat)
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/02-ATAC_processing/plotting//")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
+## REVISION: working directory is set under OUT_ROOT by rerun_setup() instead of a
+##   hard-coded setwd().
+rerun_setup("02-ATAC_processing/plotting/",
+            subdirs = c("data"))
 signac.obj.INS <- readRDS("../sampleQC_redo/INS/data/signac_integrated_v2.RDS")
 signac.obj.PFC <- readRDS("../sampleQC_redo/PFC/data/signac_integrated_v2.RDS")
-signac.obj.VST <- readRDS("../sampleQC_redo/VST/data/signac_integrated_v2.RDS")
+## REVISION: VST reads the object carrying the nine MSN subtypes
+##   (revision/tools/patch_msn_subtypes.R --target atac). The unpatched object labels every
+##   striatal neuron "MSNs", which the palette and consensus_annotation_v3 grouping
+##   below do not expect.
+signac.obj.VST <- readRDS("../sampleQC_redo/VST/data/signac_integrated_v2_msn.RDS")
 
 
 signac.obj.INS <- FindNeighbors(object = signac.obj.INS,

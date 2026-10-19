@@ -1,3 +1,16 @@
+```{r}
+## REVISION: packages used below but not loaded in the published notebook.
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(readr)
+## REVISION: provides the MAGICAL_* paths and OUT_ROOT.
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))
+```
+
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
+
 ---
 title: "analyze_magical_output"
 output: html_document
@@ -14,7 +27,11 @@ celltype <- "Astro"
 
 
 ```{r}
-atac_de_path <- paste0('/banach2/SCORCH/scripts/combined_analysis_paper/04-ATAC_DE/',region,"/results_ATAC/INS_HIV-CTR_res_edgeR_filtered.RDS")
+atac_de_path <- ## REVISION: the published code read results_ATAC/INS_*.RDS for every
+##   region (the published files were all named INS_*). 04-ATAC_DE writes
+##   <REGION>_HIV-CTR_res_edgeR_filtered_withFreq.RDS in data_ATAC/.
+file.path(OUT_ROOT, "04-ATAC_DE", region, "data_ATAC",
+          paste0(region, "_HIV-CTR_res_edgeR_filtered_withFreq.RDS"))
 atac_de <- readRDS(atac_de_path)
 atac_de_micro <- atac_de$table$`HIV-CTR`[[celltype]]
 atac_de_micro_all <- atac_de_micro[which(abs(atac_de_micro$logFC) >= 0.5 & atac_de_micro$p_adj.glb <= 0.05),]
@@ -22,7 +39,7 @@ atac_de_micro_up <- atac_de_micro[which(atac_de_micro$logFC >= 0.5 & atac_de_mic
 atac_de_micro_down <- atac_de_micro[which(atac_de_micro$logFC <= -0.5 & atac_de_micro$p_adj.glb <= 0.05),]
 
 
-rna_de_path <- paste0("/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/",region,"/results/",region,"_HIV-CTR_res_edgeR_filtered.RDS")
+rna_de_path <- paste0(file.path(OUT_ROOT, "03-DE_analysis/"),region,"/results/",region,"_HIV-CTR_res_edgeR_filtered.RDS")
 rna_de <-  readRDS(rna_de_path)
 rna_de_micro <- rna_de$table$`HIV-CTR`[[celltype]]
 rna_de_micro_up <- rna_de_micro[which(rna_de_micro$logFC >= 0.5 & rna_de_micro$p_adj.glb <= 0.05),]
@@ -34,7 +51,7 @@ rna_de_micro_all <- rna_de_micro[which(abs(rna_de_micro$logFC) >= 0.5 & rna_de_m
 
 
 ```{r}
-circuits_file <- paste0("/banach2/chang/new_SCORCH_analysis/MAGICAL/output/",region,"_",celltype,"MAGICAL_selected_regulatory_circuits.txt")
+circuits_file <- paste0(paste0(MAGICAL_OUTPUT_DIR, "/"),region,"_",celltype,"MAGICAL_selected_regulatory_circuits.txt")
 circuits <- read_table(circuits_file)
 
 expanded_circuits <- circuits %>%
@@ -52,7 +69,7 @@ expanded_circuits <- expanded_circuits[, c("TFs", "peakname", "Gene_symbol")]
 expanded_circuits <- expanded_circuits[order(expanded_circuits$TFs), ]
 
 
-folder <- paste0("/banach2/chang/new_SCORCH_analysis/MAGICAL/analyzed_output/",region,"_new_",celltype,"/")
+folder <- paste0(paste0(MAGICAL_ANALYZED, "/"),region,"_new_",celltype,"/")
 write.csv(expanded_circuits, paste0(folder,"expanded_circuits.csv"), row.names = FALSE)
 ```
 

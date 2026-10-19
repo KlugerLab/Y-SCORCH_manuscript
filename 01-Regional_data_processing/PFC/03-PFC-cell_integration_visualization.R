@@ -1,3 +1,7 @@
+# REVISION: run on the CellBender-corrected data; paths (including fast_tsne_path) come
+# from revision/config/paths.R and outputs go to OUT_ROOT. Changes from the published
+# script are marked ## REVISION.
+
 library(Seurat)
 library(SingleCellExperiment)
 library(tidyr)
@@ -7,9 +11,11 @@ options(future.globals.maxSize = 1e12)
 
 
 
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/PFC/"
-setwd(wd)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
+## REVISION: working directory is set under OUT_ROOT instead of a hard-coded server path.
+rerun_setup("01-Regional_data_processing/PFC",
+            subdirs = c("data/02-cell_annotation", "data/03-cell_integration_vis"))
 sce.obj <- readRDS("./data/02-cell_annotation/processed_sce_obj.rds")
 count_data <- sce.obj@assays@data$counts
 colnames(count_data) <- paste0(colnames(sce.obj),"-",sce.obj@colData$sample_ids)
@@ -36,7 +42,7 @@ seu.obj <- FindClusters(seu.obj, resolution = 3, cluster.name = "seurat_clusters
 # visualization
 seu.obj <-  RunTSNE(
   seu.obj,reduction = "harmony", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:50, perplexity = 200,
-  fast_tsne_path="/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=12
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=12
 )
 
 
@@ -110,8 +116,23 @@ seu.obj_sub <- IntegrateLayers(
 # visualization
 seu.obj_sub <-  RunTSNE(
   seu.obj_sub,reduction = "harmony", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:50, perplexity = 200,
-  fast_tsne_path="/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=12
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=12
 )
+
+## REVISION (reviewer request): UMAP alongside the tSNE above.
+##   Same harmony reduction and dims, so the two embeddings are directly
+##   comparable. Stored on the object before it is saved. Not part of the
+##   published analysis.
+##
+##   Threads: Seurat passes n_threads = future::nbrOfWorkers() to uwot, so a
+##   direct n_threads argument to RunUMAP is silently dropped. run_umap_threaded()
+##   sets the future plan for the call and restores it afterwards.
+seu.obj_sub <- run_umap_threaded(seu.obj_sub, reduction = "harmony", dims = 1:50)
+
+## REVISION: write named tSNE and UMAP panels. The published scripts call
+##   DimPlot() with no device open, so under Rscript every plot lands unlabelled
+##   in Rplots.pdf and the embedding figures cannot be found.
+save_embedding_panels(seu.obj_sub, prefix = "03_PFC_cell_integration_visualization")
 
 
 p1 <- DimPlot(seu.obj_sub,reduction = "tsne",group.by = "sample_ids",label=F,

@@ -1,3 +1,6 @@
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
+
 library(dplyr)
 library(ggplot2)
 library(limma)
@@ -19,12 +22,25 @@ library(circlize)
 library(grid)
 
 #BiocManager::install("GOSim")
-library(GOSim)
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/cross_region//"
-setwd(wd)
+## REVISION: GOSim is no longer in Bioconductor and no GOSim function is called
+## in this script, so the import is disabled.
+# library(GOSim)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+## REVISION: run against either DE result set.
+##   SCORCH_DE_COUNTS = "uncorrected" (default, the primary analysis) | "corrected"
+##   Inputs and outputs both carry the suffix, so the two never mix and the
+##   corrected figures cannot overwrite the primary ones.
+DE_COUNTS <- match.arg(Sys.getenv("SCORCH_DE_COUNTS", unset = "uncorrected"),
+                       c("uncorrected", "corrected"))
+OUT_SFX <- if (DE_COUNTS == "corrected") "_corrected" else ""
+## every png()/pdf()/ggsave() in this script picks this up via revision/config/paths.R
+options(scorch.out_suffix = paste0(OUT_SFX, XR_OUT_SFX))   ## REVISION: + "_donor_aware" when SCORCH_XR_DE=donor_aware
+message("[fig] DE result set: ", DE_COUNTS)
 
-
-de_edgeR <- readRDS("./data/all_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+## REVISION: working directory is set by rerun_setup() under OUT_ROOT instead of a hardcoded server path.
+rerun_setup("03-DE_analysis/cross_region/",
+            subdirs = c("data", "figures/heatmaps", "figures/microglia_pathways"))
+de_edgeR <- readRDS(xr_de_file(OUT_SFX))   ## REVISION: edgeR table by default; the donor-aware (primary) table under SCORCH_XR_DE=donor_aware
 
 top_edgeR_all <- de_edgeR  %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
@@ -71,8 +87,13 @@ new_gene_list <- as.numeric(degs_converted_top_up$logFC)
 names(new_gene_list) <- degs_converted_top_up$gene
 new_gene_list = sort(new_gene_list, decreasing = TRUE)
 
-p1 <- cnetplot(edox, color.params = list(foldChange = new_gene_list),
-               cex_label_category=1.2,cex_gene=3,cex_category=1.5,node_label="gene",
+## REVISION: current enrichplot renamed the cnetplot() arguments (color_category /
+##   size_category / color_item / size_item / node_label / foldChange); the
+##   published color.params=list(...), cex_gene and cex_category raise "unused
+##   arguments". cex_label_category has no equivalent and is dropped; label size
+##   is controlled by the theme.
+p1 <- cnetplot(edox, foldChange = new_gene_list,
+               size_item = 3, size_category = 1.5, node_label = "gene",
                showCategory=5)
 
 p1 <- p1+ scale_color_gradientn(colours = c("white", "red"))+NoLegend()
@@ -81,8 +102,8 @@ png(filename = paste0("./figures/microglia_pathways/go_netplot_micro_new.png"),w
 print(p1)
 dev.off()
 
-p1_withlabel <- cnetplot(edox, color.params = list(foldChange = new_gene_list),
-                         cex_label_category=1.2,cex_gene=3,cex_category=1.5,
+p1_withlabel <- cnetplot(edox, foldChange = new_gene_list,
+                         size_item = 3, size_category = 1.5,
                          showCategory=5)+ scale_color_gradientn(colours = c("white", "red"))
 png(filename = paste0("./figures/microglia_pathways/go_netplot_micro_withlabel_new.png"),width=5000,height = 5000,res = 300)
 print(p1_withlabel)
@@ -94,6 +115,10 @@ dev.off()
 
 
 # heatmap
+## REVISION: pb / pb.norm_mean were used below but never loaded in the published
+##   script. Load the cross-region pseudobulks written by 07-cross_region_edgeR.R.
+pb <- readRDS(paste0("./data/pseudo_bulk", OUT_SFX, ".rds"))
+pb.norm_mean <- readRDS(paste0("./data/pseudo_norm_mean_bulk", OUT_SFX, ".rds"))
 top_edgeR_all <- de_edgeR  %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb) %>%

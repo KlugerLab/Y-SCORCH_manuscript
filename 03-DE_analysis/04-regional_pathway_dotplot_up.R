@@ -1,3 +1,6 @@
+# REVISION: run on the CellBender-corrected data; paths come from
+# revision/config/paths.R and outputs go to OUT_ROOT. Changes are marked ## REVISION.
+
 library(dplyr)
 library(ggplot2)
 library(limma)
@@ -28,22 +31,34 @@ library(cowplot)
 library(patchwork)
 
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/03-DE_analysis/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+## REVISION: run against either DE result set.
+##   SCORCH_DE_COUNTS = "uncorrected" (default, the primary analysis) | "corrected"
+##   Inputs and outputs both carry the suffix, so the two never mix and the
+##   corrected figures cannot overwrite the primary ones.
+DE_COUNTS <- match.arg(Sys.getenv("SCORCH_DE_COUNTS", unset = "uncorrected"),
+                       c("uncorrected", "corrected"))
+OUT_SFX <- if (DE_COUNTS == "corrected") "_corrected" else ""
+## every png()/pdf()/ggsave() in this script picks this up via revision/config/paths.R
+options(scorch.out_suffix = OUT_SFX)
+message("[fig] DE result set: ", DE_COUNTS)
 
-
-INS_edgeR <- readRDS("./INS/results/INS_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+## REVISION: working directory is set by rerun_setup() under OUT_ROOT instead of a hardcoded server path.
+rerun_setup("03-DE_analysis",
+            subdirs = c("INS/results", "PFC//results", "VST//results", "regional/figures_tmp/dotplot_pathway_heatmap_up"))
+INS_edgeR <- readRDS(paste0("./INS/results/INS_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 INS_edgeR <- INS_edgeR %>%
   ungroup() %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb,region) 
 
-PFC_edgeR <- readRDS("./PFC//results/PFC_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+PFC_edgeR <- readRDS(paste0("./PFC//results/PFC_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 PFC_edgeR <- PFC_edgeR %>%
   ungroup() %>%
   dplyr::filter((avg_CTR_frq > 0.05) | (avg_HIV_frq > 0.05))%>%
   dplyr::select(gene,cluster_id,logFC,logCPM,p_adj.glb,region) 
 
-VST_edgeR <- readRDS("./VST//results/VST_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
+VST_edgeR <- readRDS(paste0("./VST//results/VST_HIV-CTR_res_edgeR_filtered_withFreq", OUT_SFX, ".RDS"))
 
 VST_edgeR <- VST_edgeR %>%
   ungroup() %>%

@@ -1,4 +1,9 @@
 # clean the cells and annotate the data
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. The sample sheet is rebuilt from the pipeline manifests by
+# revision/config/build_sample_metadata.R. Changes are marked ## REVISION; the annotation
+# logic is unchanged.
 
 library(Seurat)
 library(SingleCellExperiment)
@@ -8,36 +13,46 @@ library(scater)
 library(tidyr)
 library(dplyr)
 library(cowplot)
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/VST/"
-setwd(wd)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-PROCESSED_DATA_PATH = "/banach2/SCORCH/analysis/240610_pipeline/vst/"
-META_PATH = "/banach2/SCORCH/data/metadata/sample_metadata_v3.csv"
-CELL_META_PATH = "/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/VST/data/sample_metadata_withMT/"
+REGION <- "VST"
+
+## REVISION: working directory is set under OUT_ROOT instead of a hard-coded server path.
+rerun_setup(file.path("01-Regional_data_processing", REGION),
+            subdirs = "data/02-cell_annotation")
+
+PROCESSED_DATA_PATH = paste0(region_dir(REGION), "/")   ## REVISION: CellBender-corrected pipeline
+CELL_META_PATH = "./data/sample_metadata_withMT/"       ## REVISION: stage-01 output, same wd
 
 sample_folders <- list.dirs(PROCESSED_DATA_PATH,recursive = F)
 sample_folders_short <- list.dirs(PROCESSED_DATA_PATH,recursive = F,full.names = F)
-# 56 samples in total
+## REVISION: the corrected pipeline holds only the paper sample set.
 
-sample_meta <- read.csv(META_PATH)
-# only load samples of interest:
-# HIV and CTR samples from VST
-sample_meta_filter = as.data.frame(sample_meta) %>%
-  filter(!is.na(cellranger_path)) %>%
-  filter((oud_jay_v2 == FALSE) & (region=="VST") ) 
+## REVISION: the published code read sample_metadata_v3.csv and filtered
+## !is.na(cellranger_path), oud_jay_v2 == FALSE, region == "VST".
+## load_sample_meta() applies the same filter to the rebuilt sample sheet.
+sample_meta_filter <- load_sample_meta(REGION)
 table(sample_meta_filter$hiv_jay_v2)
-# 13 CTRs, 20 HIVs
+stopifnot(sum(sample_meta_filter$hiv_jay_v2 == TRUE)  == 20,
+          sum(sample_meta_filter$hiv_jay_v2 == FALSE) == 13)   ## REVISION: assert the cohort
 
 
 samples2keep <- sample_meta_filter$sample_name
 # change the sample names from HIVOUD to HIV
 samples2keep <- sapply(samples2keep,function(sname) gsub("OUD","",sname))
-samples2keep %in% sample_folders_short
+stopifnot(all(samples2keep %in% sample_folders_short))   ## REVISION: assert all kept samples exist (the gsub above is a no-op on the corrected manifests)
 samples2load_paths <- paste0(PROCESSED_DATA_PATH,samples2keep)
 
 # load the data into sce
-sce.list <- lapply(samples2keep,function(sid) SingleCellExperiment(list(counts=readRDS(paste0(PROCESSED_DATA_PATH,sid,"/label_transfer/final_counts_",sid,".rds"))),
-                                                                   colData = read.csv(paste0(CELL_META_PATH,sid,".csv"),row.names = 1)) )
+## REVISION: the corrected pipeline drops empty subject-metadata columns
+##   per sample, so the per-sample colData column sets disagree and the
+##   cbind below fails. align_coldata() restores a single common set.
+cell_meta <- lapply(samples2keep, function(sid)
+  read.csv(paste0(CELL_META_PATH, sid, ".csv"), row.names = 1))
+cell_meta <- align_coldata(cell_meta)
+sce.list <- Map(function(sid, cd) SingleCellExperiment(
+  list(counts = readRDS(paste0(PROCESSED_DATA_PATH, sid, "/label_transfer/final_counts_", sid, ".rds"))),
+  colData = cd), samples2keep, cell_meta)
 sce.obj <- do.call(cbind,sce.list)
 sce.obj <- computeLibraryFactors(sce.obj)
 sce.obj <- logNormCounts(sce.obj)

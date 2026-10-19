@@ -1,12 +1,31 @@
+# REVISION: run on the CellBender-corrected data; paths (including fast_tsne_path) come
+# from revision/config/paths.R and outputs go to OUT_ROOT. Changes from the published
+# script are marked ## REVISION.
+
 library(Seurat)
+## REVISION: packages used but never loaded in the published script (they were
+##   loaded earlier in the interactive session); under Rscript this is an error.
+library(ggplot2)
+library(dplyr)
+## REVISION: also used but never loaded.
+library(cowplot)
+library(ggpubr)
 
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/01-Regional_data_processing/"
-setwd(wd)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-
+## REVISION: working directory is set under OUT_ROOT instead of a hard-coded server path.
+rerun_setup("01-Regional_data_processing",
+            subdirs = c("combined/data", "combined/figures", "combined/figures/tsne"))
 seurat.combined <- readRDS("./combined/data/seurat_combined_v2.RDS")
 
 # re-integrate the data
+## REVISION: seurat_combined_v2.RDS arrives with the RNA assay still split
+##   (183 layers - combined/01 saved it split and combined/02 only subsets it),
+##   and Seurat v5 refuses to split an already-split assay:
+##     "Please join before splitting"
+##   The published script ran this line against a joined object. JoinLayers()
+##   is a no-op on a joined assay, so this is correct either way.
+seurat.combined <- JoinLayers(seurat.combined)
 seurat.combined[["RNA"]] <- split(seurat.combined[["RNA"]], f = seurat.combined$sample_name)
 seurat.combined <- NormalizeData(seurat.combined)
 seurat.combined <- FindVariableFeatures(seurat.combined)
@@ -20,8 +39,34 @@ seurat.combined <- IntegrateLayers(
 # visualization
 seurat.combined <-  RunTSNE(
   seurat.combined,reduction = "harmony", tsne.method = "FIt-SNE", check_duplicates = FALSE, do.fast = TRUE, seed.use=3, dims = 1:50, perplexity = 200,
-  fast_tsne_path="/bin/fast_tsne", ann_not_vptree=FALSE, nthreads=36
+  fast_tsne_path=FAST_TSNE_PATH, ann_not_vptree=FALSE, nthreads=36
 )
+
+## REVISION (reviewer request): UMAP alongside the tSNE above.
+##   Same harmony reduction and dims, so the two embeddings are directly
+##   comparable. Stored on the object before it is saved. Not part of the
+##   published analysis.
+##
+##   Threads: Seurat passes n_threads = future::nbrOfWorkers() to uwot, so a
+##   direct n_threads argument to RunUMAP is silently dropped. run_umap_threaded()
+##   sets the future plan for the call and restores it afterwards.
+seurat.combined <- run_umap_threaded(seurat.combined, reduction = "harmony", dims = 1:50)
+
+## REVISION: checkpoint the object as soon as the expensive work is done.
+##   Everything above this line is ~2 hours (JoinLayers, Harmony, FIt-SNE,
+##   UMAP); everything below is plotting. Writing the object before any plot is
+##   drawn means a plotting failure costs only the plots. The published saveRDS
+##   further down is left in place; it rewrites the same path with the
+##   annotation added later in the script.
+saveRDS(seurat.combined, "./combined/data/seurat_combined_v3.RDS")
+message("[combined/03] checkpoint written: seurat_combined_v3.RDS (",
+        ncol(seurat.combined), " cells, reductions: ",
+        paste(names(seurat.combined@reductions), collapse = ", "), ")")
+
+## REVISION: write named tSNE and UMAP panels. The published scripts call
+##   DimPlot() with no device open, so under Rscript every plot lands unlabelled
+##   in Rplots.pdf and the embedding figures cannot be found.
+save_embedding_panels(seurat.combined, prefix = "03_integration_tsne_refined")
 
 
 region_cols <- c("#E69F00", "#56B4E9","#CC79A7")

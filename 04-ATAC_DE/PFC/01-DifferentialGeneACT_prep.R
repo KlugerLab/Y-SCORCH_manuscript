@@ -1,3 +1,6 @@
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
+
 library(Seurat)
 library(Signac)
 library(SingleCellExperiment)
@@ -7,11 +10,15 @@ library(scater)
 library(tidyr)
 library(dplyr)
 library(cowplot)
+## REVISION: limma is used but was not loaded by the published script.
+library(limma)
 
-wd <- "/banach2/SCORCH/scripts/combined_analysis_paper/04-ATAC_DE/"
-setwd(wd)
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
 
-
+## REVISION: working directory is set under OUT_ROOT by rerun_setup() instead of a
+##   hard-coded setwd().
+rerun_setup("04-ATAC_DE",
+            subdirs = c("PFC/data_GeneACT"))
 signac.obj.PFC <- readRDS("../02-ATAC_processing/sampleQC_redo/PFC/data/signac_integrated_v2.RDS")
 
 DefaultAssay(signac.obj.PFC) <- "GeneACT"
@@ -41,7 +48,7 @@ pb.pfc.norm_mean <- aggregateData(sce.obj,
 ei <- metadata(sce.obj)$experiment_info
 ei$group_id <- factor(ei$group_id,levels=c("HIV","CTR"))
 
-META_PATH = "/banach2/SCORCH/data/metadata/sample_metadata_v3.csv"
+META_PATH = SAMPLE_META   ## REVISION: rebuilt sample sheet
 sample_meta <- read.csv(META_PATH)
 sample_meta_filter = as.data.frame(sample_meta) %>%
   dplyr::filter(!is.na(cellranger_path)) %>%
@@ -85,12 +92,10 @@ colnames(res.edgeR_result) <- sapply(colnames(res.edgeR_result),function(cname){
   else return(gsub(num, paste0("a",num), cname))
 })
 
-res.edgeR_result <- res.edgeR_result %>%
-  rowwise() %>%
-  mutate(avg_CTR_frq = mean(c_across(HCCPL.frq:HCTXJ.frq), na.rm = TRUE)) %>%
-  mutate(avg_HIV_frq = mean(c_across(a6801066772.frq:a1133.frq), na.rm = TRUE)) %>%
-  mutate(region = "PFC") %>%
-  ungroup()
+## REVISION: the published script averaged group frequencies over a positional
+##   c_across() column range, which is wrong if sample order changes; groups are
+##   now assigned by sample (add_group_frq() in revision/config/paths.R).
+res.edgeR_result <- add_group_frq(res.edgeR_result, sce.obj, "PFC")
 
 saveRDS(res.edgeR_result,"./PFC/data_GeneACT/PFC_HIV-CTR_res_edgeR_filtered_withFreq.RDS")
 

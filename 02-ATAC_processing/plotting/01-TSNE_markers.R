@@ -1,4 +1,7 @@
 # TSNE visualization of the ATAC data
+#
+# REVISION: run on the CellBender-corrected data; paths come from revision/config/paths.R
+# and outputs go to OUT_ROOT. Changes from the published script are marked ## REVISION.
 
 library(Seurat)
 library(Signac)
@@ -8,11 +11,23 @@ library(cowplot)
 library(ggpubr)
 library(patchwork)
 library(ggrepel)
+## REVISION: ggplot2 is used but was not loaded by the published script;
+##   loaded explicitly so the script runs under Rscript.
+library(ggplot2)
 
-setwd("/banach2/SCORCH/scripts/combined_analysis_paper/02-ATAC_processing/plotting/")
+source(file.path(Sys.getenv("SCORCH_REPO", "."), "revision/config/paths.R"))   ## REVISION
+
+## REVISION: working directory is set under OUT_ROOT by rerun_setup() instead of a
+##   hard-coded setwd().
+rerun_setup("02-ATAC_processing/plotting",
+            subdirs = c("figures/tsne_new"))
 signac.obj.INS <- readRDS("../sampleQC_redo/INS/data/signac_integrated_v2.RDS")
 signac.obj.PFC <- readRDS("../sampleQC_redo/PFC/data/signac_integrated_v2.RDS")
-signac.obj.VST <- readRDS("../sampleQC_redo/VST/data/signac_integrated_v2.RDS")
+## REVISION: VST reads the object carrying the nine MSN subtypes
+##   (revision/tools/patch_msn_subtypes.R --target atac). The unpatched object labels every
+##   striatal neuron "MSNs", which the palette and consensus_annotation_v3 grouping
+##   below do not expect.
+signac.obj.VST <- readRDS("../sampleQC_redo/VST/data/signac_integrated_v2_msn.RDS")
 
 signac.obj.INS@meta.data$consensus_annotation_v3_relabeled <- signac.obj.INS@meta.data$consensus_annotation_v3
 signac.obj.INS@meta.data$consensus_annotation_v3_relabeled[signac.obj.INS@meta.data$consensus_annotation_v3 == "Immune"] <- "Other immune"

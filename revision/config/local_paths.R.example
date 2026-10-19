@@ -1,0 +1,27 @@
+# Machine-specific data locations for the revision code. Copy to local_paths.R
+# (not tracked) and edit. All paths are read-only inputs except OUT_ROOT.
+
+## CellBender-corrected per-sample pipeline output (the input to the revision)
+PIPELINE_DIR          <- "/path/to/260415_pipeline_ambientRNA"
+## Original, uncorrected per-sample pipeline output
+ORIG_PIPELINE_DIR     <- "/path/to/240610_pipeline"
+## Outputs of the published analysis (includes reference/)
+ORIG_ANALYSIS_DIR     <- "/path/to/combined_analysis_paper"
+## percent.mt recomputed from the corrected counts (labeled_metadata_with_pt_mt_<sample>.csv)
+FIXED_META_DIR        <- "/path/to/cellbender_fixed_meta"
+## 07-Viral_Detection reference data (HXB2 fasta, 10x barcode whitelists)
+VIRAL_REF_DIR         <- "/path/to/Y-SCORCH_manuscript/07-Viral_Detection"
+## CellRanger-ARC output per run (ATAC fragments, viral detection outputs)
+RAW_DIR               <- "/path/to/SCORCH/data/raw"
+## Primate NAcc MSN reference used for MSN subtyping
+MSN_REF_ORIG          <- "/path/to/primate_nacc_vst_msn_monkeyP.RDS"
+## Extra R libraries outside the container image (ReactomePA etc.; MultiNicheNet/GSVA)
+RLIBS_DIR             <- "/path/to/rlibs"
+RLIBS_CCC             <- "/path/to/rlibs_ccc"
+## Full-cohort MultiNicheNet results (revision/external/multiNicheNet.R), for comparison
+MULTINICHENET_REF_DIR <- "/path/to/MultiNicheNet/output"
+## Published supplementary tables (layout reference for the regenerated QC table)
+PUB_SUPP_DIR          <- "/path/to/supplemental_tables"
+
+## Everything the revision writes goes here (large; keep outside the repository)
+OUT_ROOT              <- "/path/to/output"
